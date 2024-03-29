@@ -3,12 +3,12 @@
 #include<string.h>
 #include<sstream>
 #include<unistd.h>
-#include<map>
 #include<signal.h>
 #include<vector>
-#include<queue>
 #include<sys/wait.h>
 #include<fcntl.h>
+#include<sys/socket.h>
+#include<netinet/in.h>
 using namespace std;
 
 /*
@@ -365,10 +365,48 @@ void executable(){
     }
 }
 
-int main(){
-    processNum = 0;
+int main(int argc, char *argv[]){
     signal(SIGCHLD, signal_child);
+
+    if(argc < 2) {
+        cerr << "No port input\n";
+        exit(0);
+    }
+
+    processNum = 0;
+
+    int msock;
+    if((msock = socket(AF_INET, SOCK_STREAM, 0)) < 0){
+        cerr << "Create Main Socket fail" << strerror(errno) << endl;;
+        exit(0);
+    }
+
+    const int enable = 1;
+    if(setsockopt(msock, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int))<0){
+        cerr << "set socket option error:" << strerror(errno) << endl;
+    }
+    sockaddr_in serverAddr;
+    bzero((char *)&serverAddr, sizeof(serverAddr));
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_addr.s_addr = INADDR_ANY;
+    serverAddr.sin_port = htons(stoi(argv[1]));
+
+    if(bind(msock, (const sockaddr *)&serverAddr, sizeof(serverAddr))<0){
+        cerr << "Bind socker fail:" << strerror(errno) << endl;
+        close(msock);
+        exit(0);
+    }
+    
+    if(listen(msock, 30)<0){
+        cerr << "socket " << msock << "listen failed" << strerror(errno) << endl;
+        exit(0);
+    }
     setenv("PATH" , "bin:.", 1);
+
+    while(1){
+        
+    }
+
     executable();
     
     return 0;

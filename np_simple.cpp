@@ -379,9 +379,15 @@ int main(int argc, char *argv[]){
 
     int msock;
     if((msock = socket(AF_INET, SOCK_STREAM, 0)) < 0){
-        cerr << "Create Main Socket fail" << strerror(errno) << endl;;
+        cerr << "Create Main Socket fail:" << strerror(errno) << endl;;
         exit(0);
     }
+
+    const int enable = 1;
+    if(setsockopt(msock, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int))<0){
+        cerr << "set socket option error:" << strerror(errno) << endl;
+    }
+    
     sockaddr_in serverAddr;
     bzero((char *)&serverAddr, sizeof(serverAddr));
     serverAddr.sin_family = AF_INET;
@@ -395,10 +401,11 @@ int main(int argc, char *argv[]){
     }
     
     if(listen(msock, 1)<0){
-        cerr << "socket " << msock << "listen failed" << strerror(errno) << endl;
+        cerr << "socket " << msock << "listen failed:" << strerror(errno) << endl;
         exit(0);
     }
 
+    setenv("PATH" , "bin:.", 1);
     while(1){
         sockaddr_in clientAddr = {};
         bzero((char *)&clientAddr, sizeof(clientAddr));
@@ -413,18 +420,16 @@ int main(int argc, char *argv[]){
             dup2(ssock, STDOUT_FILENO);
             dup2(ssock, STDERR_FILENO);
             close(msock);
-            setenv("PATH" , "bin:.", 1);
             executable(ssock);
             break;
         case -1: // fork error
-            cerr << "fork error\n" << strerror(errno) << endl;
+            cerr << "fork error:\n" << strerror(errno) << endl;
             break;
         default: // parent process
             close(ssock);
             waitpid(child_pid, NULL, 0);
             break;
         }
-    
     }
 
     close(msock);
