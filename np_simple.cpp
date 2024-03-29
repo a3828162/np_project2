@@ -308,7 +308,7 @@ void processToken(command &cmd){
     pipes.clear();
 }
 
-void processCommand(command &cmd){
+void processCommand(command &cmd, int &ssock){
     if(isBuildinCmd(cmd)){
         cmd.commandType = 1;
         if(cmd.tokens[0] == "setenv"){
@@ -329,6 +329,7 @@ void processCommand(command &cmd){
             }
             
         } else if(cmd.tokens[0] == "exit"){
+            close(ssock);
             exit(0);
         }
         decreaseNumberPipeLeft();
@@ -339,7 +340,7 @@ void processCommand(command &cmd){
     }
 }
 
-void executable(){
+void executable(int &ssock){
 
     string cmdLine;
     stringstream ss;
@@ -356,7 +357,7 @@ void executable(){
         for(int i=0;i<tmp.size();++i){
             currentcmd.tokens.push_back(tmp[i]);
             if(currentcmd.isNumberPipe(tmp[i]) || i == tmp.size() - 1){
-                processCommand(currentcmd);
+                processCommand(currentcmd, ssock);
                 currentcmd = command{};
             }
         }
@@ -377,28 +378,24 @@ int main(int argc, char *argv[]){
     processNum = 0;
 
     int msock;
-    if(msock = socket(AF_INET, SOCK_STREAM, 0) < 0){
-        cerr << "Create Main Socket fail\n";
+    if((msock = socket(AF_INET, SOCK_STREAM, 0)) < 0){
+        cerr << "Create Main Socket fail" << strerror(errno) << endl;;
         exit(0);
     }
-    sockaddr_in serverAddr = {};
+    sockaddr_in serverAddr;
     bzero((char *)&serverAddr, sizeof(serverAddr));
     serverAddr.sin_family = AF_INET;
     serverAddr.sin_addr.s_addr = INADDR_ANY;
     serverAddr.sin_port = htons(stoi(argv[1]));
-    cout << argv[1] << endl;
-    cout << stoi(argv[1]) << endl;
-    cout << serverAddr.sin_port << endl;
 
     if(bind(msock, (const sockaddr *)&serverAddr, sizeof(serverAddr))<0){
-        cerr << "Bind socker fail\n";
+        cerr << "Bind socker fail:" << strerror(errno) << endl;
         close(msock);
         exit(0);
     }
     
     if(listen(msock, 1)<0){
-        cerr << "socket " << msock << "listen failed\n";
-        close(msock);
+        cerr << "socket " << msock << "listen failed" << strerror(errno) << endl;
         exit(0);
     }
 
@@ -417,21 +414,19 @@ int main(int argc, char *argv[]){
             dup2(ssock, STDERR_FILENO);
             close(msock);
             setenv("PATH" , "bin:.", 1);
-            executable();
+            executable(ssock);
             break;
         case -1: // fork error
-            cerr << "fork error\n";
+            cerr << "fork error\n" << strerror(errno) << endl;
             break;
         default: // parent process
             close(ssock);
             waitpid(child_pid, NULL, 0);
             break;
         }
-        
-
+    
     }
 
-    
     close(msock);
 
     return 0;
