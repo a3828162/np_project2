@@ -28,6 +28,7 @@ operationType
 3 : |1
 4 : ?1
 5 : >1
+6 : <1
 */
 
 class command
@@ -42,6 +43,8 @@ public:
     vector<string> tokens;
 
     bool isNumberPipe(string token);
+    bool isUserPipe(string token);
+    bool isNormalPipe(string token);
     bool isOPToken(string token);
     void setNextOP(string token);
     char **buildArgv();
@@ -69,11 +72,22 @@ bool command::isNumberPipe(string token){
     return (token[0]=='|'||token[0]=='!')&&isdigit(token[1]);
 }
 
+bool command::isUserPipe(string token){
+    if(token.size()<2) return false;
+    return (token[0]=='<'||token[0]=='>')&&isdigit(token[1]);
+}
+
+bool command::isNormalPipe(string token){
+    if(token == "|" || token == ">") return true;
+    else if((token[0]=='|' || token[0]=='!')&&isdigit(token[1])) return true;
+    return false;
+}
+
 bool command::isOPToken(string token){
     if(token == "|" || token == ">"){
         return true;
     }else if(token.size() >= 2 &&
-     (token[0] == '|' || token[0] == '!') &&
+     (token[0] == '|' || token[0] == '!' || token[0] == '>' || token[0] == '<') &&
      isdigit(token[1])){
         return true;
     }
@@ -89,7 +103,9 @@ void command::setNextOP(string token){
     } else if(token.size()>=2){
         if(token[0] == '|' && isdigit(token[1])) nextOP = 3;
         else if(token[0] = '!' && isdigit(token[1])) nextOP = 4;
-    }
+        else if(token[0] = '>' && isdigit(token[1])) nextOP = 5;
+        else if(token[0] = '<' && isdigit(token[1])) nextOP = 6;
+    } 
 }
 
 char **command::buildArgv(){
@@ -417,7 +433,7 @@ void forkandexec(command &cmd, int left){
         }
 
         int status = 0;
-        usleep(20000); 
+        //usleep(20000); 
         if(cmd.nextOP == 1 || cmd.nextOP == 3 || cmd.nextOP == 4){ // | |2 !2 don't hang on forever
             //waitpid(-1,&status,WNOHANG);
             if(waitpid(-1,&status,WNOHANG)>0){ // add
@@ -454,6 +470,22 @@ void processToken(command &cmd){
                         }
                         numberPipes[numberPipes.size()-1].pipetype = cmd.nextOP;
                         numberPipes[numberPipes.size()-1].numberleft = left;
+                    }
+                } else if(cmd.isUserPipe(cmd.tokens[i])){
+                    if(i+1 < cmd.tokens.size()){
+                        if(cmd.isUserPipe(cmd.tokens[i+1])){ // cat <2 >1 or cat >1 <2
+                            
+                        }else if(cmd.isNormalPipe(cmd.tokens[i+1])){ // cat <2 |(|1, >)
+                            cmd.previosOP = 6;
+                            cmd.setNextOP(cmd.tokens[i+1]);
+                        }
+                        ++i;
+                    } else {
+                        if(cmd.tokens[i][0]=='<'){ // cat <2
+                            cmd.previosOP = 6;
+                        } else if(cmd.tokens[i][0]=='>'){ // cat >2
+                            cmd.nextOP = 5;
+                        }
                     }
                 }
             } 
