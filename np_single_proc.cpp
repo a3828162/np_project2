@@ -27,6 +27,7 @@ operationType
 2 : >
 3 : |1
 4 : ?1
+5 : >1
 */
 
 class command
@@ -112,6 +113,15 @@ struct pipestruct
     int fd[2];
 };
 
+struct userpipestruct
+{
+    userpipestruct() : pipetype(0), srcUserID(-1), dstUserID(-1) {}
+    int srcUserID;
+    int dstUserID;
+    int pipetype; // 0 : init, 1 : | , 2 : ! , 3 : |1 , 4 : !1
+    int fd[2];
+};
+
 class userinfo
 {
 public:
@@ -121,7 +131,7 @@ public:
     string name;
     string addr;
     map<string, string> env;
-    //vector<pipestruct> numberPipes;
+    vector<pipestruct> userNumberPipes;
 
     userinfo(/* args */);
     ~userinfo();
@@ -136,16 +146,20 @@ userinfo::userinfo(/* args */)
 userinfo::~userinfo()
 {
     env.clear();
+    userNumberPipes.clear();
 }
 
 vector<pipestruct> pipes;
 vector<pipestruct> numberPipes;
 vector<userinfo> users;
+
 const int maxProcessNum = 500;
+const string welcomemessage = "****************************************\n** Welcome to the information server. **\n****************************************\n";
 int processNum = 0;
 int maxfd = 50;
 int serverport;
-const string welcomemessage = "****************************************\n** Welcome to the information server. **\n****************************************\n";
+
+int stdinfdTmp , stdoutTmp , stderrTmp;
 
 fd_set afds;
 fd_set rfds;
@@ -157,7 +171,10 @@ void signal_child(int signal){
 }
 
 bool isBuildinCmd(command currentcmd){
-    return currentcmd.tokens[0] == "setenv" || currentcmd.tokens[0] == "printenv" || currentcmd.tokens[0] == "exit";
+    return currentcmd.tokens[0] == "setenv" || currentcmd.tokens[0] == "printenv" 
+        || currentcmd.tokens[0] == "exit" || currentcmd.tokens[0] == "who"
+        || currentcmd.tokens[0] == "tell" || currentcmd.tokens[0] == "yell"
+        || currentcmd.tokens[0] == "name";
 }
 
 int matchNumberPipeQueue(int left){
@@ -175,6 +192,126 @@ void decreaseNumberPipeLeft(){
             --i;
         } 
     }
+}
+
+void setUserEnv(int index){
+    clearenv();
+    /*for(map<string, string>::iterator it = users[index].env.begin(); it!=users[index].env.end();++it){
+        setenv(it->first.c_str(), it->second.c_str(), 1);
+    }*/
+    for(auto& [key, value]:users[index].env){
+        setenv(key.c_str(), value.c_str(), 1);
+    }
+}
+
+void broadcast(string message){
+    for(int i=0;i<users.size();++i){
+        if(write(users[i].ssock, message.c_str(),message.size())<0){
+            cerr << "write error" << strerror(errno) <<"\n";
+        }
+    }
+}
+
+void unicast(int srcUserIndex, int dstID, string tellMessage){
+    bool exist = false;
+    string message;
+    int i;
+    for(i = 0;i<users.size();++i){
+        if(users[i].ID == dstID){
+            exist = true;
+            break;
+        } 
+    }
+    
+    if(exist){
+        message = "*** " + users[srcUserIndex].name + " told you ***: " + tellMessage + "\n";
+        if(write(users[i].ssock, message.c_str(),message.size())<0){
+            cerr << "write error" << strerror(errno) <<"\n";
+        }
+    }else{
+        message = "*** Error: user #" + to_string(dstID) + " does not exist yet. ***\n";
+        if(write(users[srcUserIndex].ssock, message.c_str(),message.size())<0){
+            cerr << "write error" << strerror(errno) <<"\n";
+        }
+    }
+
+}
+
+void name(int userIndex, string newName){
+    bool exist = false;
+    string message;
+    int i;
+    for(i = 0; i < users.size();++i){
+        if(users[i].name == newName){
+            exist = true;
+            break;
+        } 
+    }
+    if(exist){
+        message = "*** User " + newName + " already exists. ***\n";
+        if(write(users[userIndex].ssock, message.c_str(),message.size())<0){
+            cerr << "write error" << strerror(errno) <<"\n";
+        }
+    }else{
+        users[userIndex].name = newName;
+        message = "*** User from " + users[userIndex].addr + ":" + to_string(users[userIndex].port) + " is named '" + newName + "'. ***\n";
+        broadcast(message);
+    }
+}
+
+void who(int userIndex){
+    string message;
+
+    message = "<ID>    <nickname>    <IP:port>    <indicate me>\n";
+    if(write(users[userIndex].ssock, message.c_str(),message.size())<0){
+        cerr << "write error" << strerror(errno) <<"\n";
+    }
+    for(int j=0;j<users.size();++j){
+        message = to_string(users[j].ID) + "    " + users[j].name + "    " + users[j].addr + ":" + to_string(users[j].port);
+        if(j==userIndex) message += "    <-me\n";
+        else message += "\n";
+        if(write(users[userIndex].ssock, message.c_str(), message.size())<0){
+            cerr << "write error" << strerror(errno) <<"\n";
+        }
+    }
+}
+
+void welcome(int userID){
+    int i;
+    for(i = 0; i < users.size();++i){
+        if(users[i].ID == userID){
+            if(write(users[i].ssock, welcomemessage.c_str(),welcomemessage.size())<0){
+                cerr << "write error" << strerror(errno) <<"\n";
+            }
+            break;
+        }
+    }
+    
+    string broadcastMessage = "*** User '" + users[i].name + "' entered from " + users[i].addr + ":" + to_string(users[i].port) + ". ***\n";
+    broadcast(broadcastMessage);
+}
+
+void logout(int &userIndex){
+    string message = "*** User '" + users[userIndex].name + "' left. ***\n";
+    broadcast(message);
+}
+
+void dup2toclient(int userIndex){
+    dup2(users[userIndex].ssock, STDIN_FILENO);
+    dup2(users[userIndex].ssock, STDOUT_FILENO);
+    dup2(users[userIndex].ssock, STDERR_FILENO);
+}
+
+void dup2recovery(){
+    dup2(stdinfdTmp, STDIN_FILENO);
+    dup2(stdoutTmp, STDOUT_FILENO);
+    dup2(stderrTmp, STDERR_FILENO);
+    cout << stdinfdTmp << endl;
+    cout << stdoutTmp << endl;
+    cout << stderrTmp << endl;
+    close(stdinfdTmp);
+    close(stdoutTmp);
+    close(stderrTmp);
 }
 
 void forkandexec(command &cmd, int left){
@@ -343,86 +480,92 @@ void processToken(command &cmd){
     pipes.clear();
 }
 
-void processCommand(command &cmd){
+int processCommand(command &cmd, int userIndex){
     if(isBuildinCmd(cmd)){
         cmd.commandType = 1;
         if(cmd.tokens[0] == "setenv"){
 
             if(cmd.tokens.size() < 3){
                 cerr << "loss parameters" << endl;
-                return;
-            } 
+                return 0;
+            }
             setenv(cmd.tokens[1].c_str(), cmd.tokens[2].c_str(), 1);
+            users[userIndex].env[cmd.tokens[1]] = cmd.tokens[2];
+            dup2recovery();
         } else if(cmd.tokens[0] == "printenv"){
             if(cmd.tokens.size()<2){
                 cerr << "loss parameters" << endl;
-                return;
+                return 0;
             } 
             
             if(getenv(cmd.tokens[1].c_str())){
                 cout << getenv(cmd.tokens[1].c_str()) << endl;
             }
-            
+            dup2recovery();
         } else if(cmd.tokens[0] == "exit"){
-            exit(0);
+            cout << "before recovery" << endl;
+            logout(userIndex);
+            dup2recovery();
+            cout << "after recovery" << endl;
+            FD_CLR(users[userIndex].ssock, &afds);
+            for(int i=0;i<numberPipes.size();++i) {
+                close(numberPipes[i].fd[0]);
+            }
+            close(users[userIndex].ssock);
+            return -1;
+        } else if(cmd.tokens[0] == "who"){
+            who(userIndex);
+            dup2recovery();
+        } else if(cmd.tokens[0] == "tell"){
+            unicast(userIndex, stoi(cmd.tokens[1]), cmd.tokens[2]);
+            dup2recovery();
+        } else if(cmd.tokens[0] == "yell"){
+            broadcast(cmd.tokens[1]+"\n");
+            dup2recovery();
+        } else if(cmd.tokens[0] == "name"){
+            name(userIndex, cmd.tokens[1]);
+            dup2recovery();
+        } else {
+            dup2recovery();
         }
         decreaseNumberPipeLeft();
     } else {
         cmd.commandType = 2;
         processToken(cmd);
+        dup2recovery();
         decreaseNumberPipeLeft();
     }
+    return 0;
 }
 
-void executable(){
+int executable(int &userIndex, string &inputCmd){
 
-    string cmdLine;
     stringstream ss;
-    while(cout << "% " && getline(cin, cmdLine)){
-        command currentcmd;
-        
-        ss << cmdLine;
-        string token;
-        vector<string> tmp;
-        
-        while(ss>>token){
-            tmp.push_back(token);
-        }
-        for(int i=0;i<tmp.size();++i){
-            currentcmd.tokens.push_back(tmp[i]);
-            if(currentcmd.isNumberPipe(tmp[i]) || i == tmp.size() - 1){
-                processCommand(currentcmd);
-                currentcmd = command{};
-            }
-        }
-        ss.clear();
-    }
-}
-
-void broadcast(int userID, string message){
-    cout << "in broadcast\n" <<endl;
-    for(int i=0;i<users.size();++i){
-        if(users[i].ID != userID){
-            if(write(users[i].ssock, message.c_str(),message.size())<0){
-                cerr << "write error" << strerror(errno) <<"\n";
-            }
-        }
-    }
-}
-
-void welcome(int userID){
-    int i;
-    for(i = 0; i < users.size();++i){
-        if(users[i].ID == userID){
-            if(write(users[i].ssock, welcomemessage.c_str(),welcomemessage.size())<0){
-                cerr << "write error" << strerror(errno) <<"\n";
-            }
-            break;
-        }
-    }
+    //while(cout << "% " && getline(cin, cmdLine)){
+    command currentcmd;
     
-    string broadcastMessage = "*** User '" + users[i].name + "' entered from " + users[i].addr + ":" + to_string(users[i].port) + ". ***\n";
-    broadcast(userID, broadcastMessage);
+    ss << inputCmd;
+    string token;
+    vector<string> tmp;
+    
+    while(ss>>token){
+        tmp.push_back(token);
+    }
+    if(tmp.size()==0){
+        dup2recovery();
+        return 1;
+    }
+    for(int i=0;i<tmp.size();++i){
+        currentcmd.tokens.push_back(tmp[i]);
+        if(currentcmd.isNumberPipe(tmp[i]) || i == tmp.size() - 1){
+            int state = processCommand(currentcmd, userIndex);
+            if(state == -1) return state;
+            currentcmd = command{};
+        }
+    }
+    ss.clear();
+    return 1;
+    //}
 }
 
 void rwgserver(){
@@ -456,6 +599,8 @@ void rwgserver(){
     setenv("PATH" , "bin:.", 1);
 
     int nfds = getdtablesize();
+    int currentfd;
+    char buffer[15000] = {};
     FD_ZERO(&afds);
     FD_ZERO(&rfds);
     FD_SET(msock, &afds);
@@ -463,12 +608,17 @@ void rwgserver(){
     while(1){
         memcpy(&rfds, &afds, sizeof(rfds));
         timeval tv = {0, 10};
-        if(select(maxfd+1, &rfds, NULL, NULL, &tv) < 0){
+        /*if(select(maxfd+1, &rfds, NULL, NULL, &tv) < 0){
+            cerr << "select fail:" << strerror(errno) << "\n";
+            continue;
+        }*/
+        if(select(maxfd+1, &rfds, NULL, NULL, (struct timeval *)0) < 0){
             cerr << "select fail:" << strerror(errno) << "\n";
             continue;
         }
         
         if(FD_ISSET(msock, &rfds)){
+            
             int ssock;
             sockaddr_in clientAddr;
             bzero((char *)&clientAddr, sizeof(clientAddr));
@@ -489,10 +639,47 @@ void rwgserver(){
             cout << "===========================" << endl;
             users.push_back(user);
             welcome(user.ID);
+            if(write(user.ssock, "% ", 2)<0){
+                cerr << "write error:" << strerror(errno) <<"\n";
+            }
             FD_SET(ssock, &afds);
         }
-    }
 
+        for(int i=0;i<users.size();++i){
+            currentfd = users[i].ssock;
+            cout << "before accept read\n";
+            if(FD_ISSET(currentfd, &rfds)){
+                cout << "accept read\n";
+                int n = read(currentfd, buffer, 15000);
+                if(n<0){
+                    cerr << "read error:" << strerror(errno) << "\n";
+                }
+                //cout << buffer;
+                stdinfdTmp = dup(STDIN_FILENO), stdoutTmp = dup(STDOUT_FILENO), stderrTmp = dup(STDERR_FILENO);
+                cout << "Try1" << endl;
+                string tmpS(buffer);
+                setUserEnv(i);
+                numberPipes = users[i].userNumberPipes;
+                dup2toclient(i);
+                int state = executable(i, tmpS);
+                users[i].userNumberPipes = numberPipes;
+                numberPipes.clear();
+                //cout <<"state: " << state << endl;
+                if(state == -1){
+                    users[i].userNumberPipes.clear();
+                    users.erase(users.begin()+i);
+                    cout << users.size() << endl;
+                    break;
+                }else {
+                    if(write(currentfd, "% ", 2)<0){
+                        cerr << "write error:" << strerror(errno) <<"\n";
+                    }
+                }
+
+                memset(buffer, '\0', 15000);
+            }
+        }
+    }
 }
 
 int main(int argc, char *argv[]){
@@ -506,8 +693,6 @@ int main(int argc, char *argv[]){
     serverport = stoi(argv[1]);
     processNum = 0;
     rwgserver();
-
-    executable();
     
     return 0;
 }
