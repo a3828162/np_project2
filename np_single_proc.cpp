@@ -9,6 +9,8 @@
 #include<fcntl.h>
 #include<sys/socket.h>
 #include<netinet/in.h>
+#include<map>
+#include <arpa/inet.h>
 using namespace std;
 
 /*
@@ -110,10 +112,43 @@ struct pipestruct
     int fd[2];
 };
 
+class userinfo
+{
+public:
+    int ID;
+    int ssock;
+    int port;
+    string name;
+    string addr;
+    map<string, string> env;
+    //vector<pipestruct> numberPipes;
+
+    userinfo(/* args */);
+    ~userinfo();
+};
+
+userinfo::userinfo(/* args */)
+{
+    ID = -1;
+    env["PATH"] = "bin:.";
+}
+
+userinfo::~userinfo()
+{
+    env.clear();
+}
+
 vector<pipestruct> pipes;
 vector<pipestruct> numberPipes;
-int maxProcessNum = 500;
+vector<userinfo> users;
+const int maxProcessNum = 500;
 int processNum = 0;
+int maxfd = 50;
+int serverport;
+const string welcomemessage = "****************************************\n** Welcome to the information server. **\n****************************************\n";
+
+fd_set afds;
+fd_set rfds;
 
 void signal_child(int signal){
 	int status;
@@ -360,27 +395,44 @@ void executable(){
                 currentcmd = command{};
             }
         }
-
         ss.clear();
     }
 }
 
-int main(int argc, char *argv[]){
-    signal(SIGCHLD, signal_child);
-
-    if(argc < 2) {
-        cerr << "No port input\n";
-        exit(0);
+void broadcast(int userID, string message){
+    cout << "in broadcast\n" <<endl;
+    for(int i=0;i<users.size();++i){
+        if(users[i].ID != userID){
+            if(write(users[i].ssock, message.c_str(),message.size())<0){
+                cerr << "write error" << strerror(errno) <<"\n";
+            }
+        }
     }
+}
 
-    processNum = 0;
+void welcome(int userID){
+    int i;
+    for(i = 0; i < users.size();++i){
+        if(users[i].ID == userID){
+            if(write(users[i].ssock, welcomemessage.c_str(),welcomemessage.size())<0){
+                cerr << "write error" << strerror(errno) <<"\n";
+            }
+            break;
+        }
+    }
+    
+    string broadcastMessage = "*** User '" + users[i].name + "' entered from " + users[i].addr + ":" + to_string(users[i].port) + ". ***\n";
+    broadcast(userID, broadcastMessage);
+}
 
+void rwgserver(){
+    
     int msock;
     if((msock = socket(AF_INET, SOCK_STREAM, 0)) < 0){
         cerr << "Create Main Socket fail" << strerror(errno) << endl;;
         exit(0);
     }
-
+    
     const int enable = 1;
     if(setsockopt(msock, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int))<0){
         cerr << "set socket option error:" << strerror(errno) << endl;
@@ -389,7 +441,7 @@ int main(int argc, char *argv[]){
     bzero((char *)&serverAddr, sizeof(serverAddr));
     serverAddr.sin_family = AF_INET;
     serverAddr.sin_addr.s_addr = INADDR_ANY;
-    serverAddr.sin_port = htons(stoi(argv[1]));
+    serverAddr.sin_port = htons(serverport);
 
     if(bind(msock, (const sockaddr *)&serverAddr, sizeof(serverAddr))<0){
         cerr << "Bind socker fail:" << strerror(errno) << endl;
@@ -403,9 +455,57 @@ int main(int argc, char *argv[]){
     }
     setenv("PATH" , "bin:.", 1);
 
+    int nfds = getdtablesize();
+    FD_ZERO(&afds);
+    FD_ZERO(&rfds);
+    FD_SET(msock, &afds);
+
     while(1){
+        memcpy(&rfds, &afds, sizeof(rfds));
+        timeval tv = {0, 10};
+        if(select(maxfd+1, &rfds, NULL, NULL, &tv) < 0){
+            cerr << "select fail:" << strerror(errno) << "\n";
+            continue;
+        }
         
+        if(FD_ISSET(msock, &rfds)){
+            int ssock;
+            sockaddr_in clientAddr;
+            bzero((char *)&clientAddr, sizeof(clientAddr));
+            unsigned int alen; 
+            alen = sizeof(clientAddr);
+            ssock = accept(msock, (struct sockaddr *)&clientAddr, &alen);
+            if(ssock < 0){
+                cerr << "accpet error:" << strerror(errno) << "\n";
+            }
+            userinfo user = {};
+            user.ID = users.size()+1;
+            user.ssock = ssock;
+            user.port = ntohs(clientAddr.sin_port);
+            user.addr = inet_ntoa(clientAddr.sin_addr);
+            user.name = "(no name)";
+            
+            cout << "ID:" << user.ID <<"\nssock:" << user.ssock << "\nport:" << user.port << "\naddr:" << user.addr <<"\n";
+            cout << "===========================" << endl;
+            users.push_back(user);
+            welcome(user.ID);
+            FD_SET(ssock, &afds);
+        }
     }
+
+}
+
+int main(int argc, char *argv[]){
+    signal(SIGCHLD, signal_child);
+
+    if(argc < 2) {
+        cerr << "No port input\n";
+        exit(0);
+    }
+    
+    serverport = stoi(argv[1]);
+    processNum = 0;
+    rwgserver();
 
     executable();
     
