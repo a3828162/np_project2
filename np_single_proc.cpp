@@ -11,8 +11,10 @@
 #include<sys/socket.h>
 #include<netinet/in.h>
 #include<map>
-#include <arpa/inet.h>
+#include<arpa/inet.h>
+#include<dirent.h>
 using namespace std;
+
 
 /*
 commandType
@@ -184,6 +186,7 @@ map<string, string> backupenv;
 
 const int maxProcessNum = 500;
 const string welcomemessage = "****************************************\n** Welcome to the information server. **\n****************************************\n";
+const int FD_NULL = open("/dev/null", O_RDWR);
 int processNum = 0;
 int maxfd = 50;
 int serverport;
@@ -415,6 +418,9 @@ void forkandexec(command &cmd, int left, int &userIndex){
                 close(userPipes[userPipeIndex].fd[0]);
                 userPipes.erase(userPipes.begin()+userPipeIndex);
                 cmd.previosOP = 0;
+            } else {
+                dup2(FD_NULL, STDIN_FILENO);
+                cmd.previosOP = 0;
             }
         }
         
@@ -444,6 +450,8 @@ void forkandexec(command &cmd, int left, int &userIndex){
                     dup2(userPipes[userPipeIndex].fd[1], STDOUT_FILENO);
                     close(userPipes[userPipeIndex].fd[0]);
                     close(userPipes[userPipeIndex].fd[1]);
+                } else {
+                    dup2(FD_NULL, STDOUT_FILENO);
                 }
             } else { // not appear previosOP == 0 , nextOP == 3(4) this case, because pipes.size() will == 0  ex. ls |
                 // ex. 'ls' | cat
@@ -453,7 +461,7 @@ void forkandexec(command &cmd, int left, int &userIndex){
                 close(pipes[pipes.size()-1].fd[0]);
             }
         } else if(cmd.previosOP != 0 && cmd.nextOP == 0){ // previosOP == 1 , nextOP == 0   ex. ls | 'ls'
-            if(cmd.previosOP==6){
+            if(cmd.previosOP==6){ // ls <2
                 if(cmd.userPipeErrorType==0){
                     int userPipeIndex = getUserPipeIndex(cmd.writeUserID, users[userIndex].ID);
                     
@@ -462,6 +470,8 @@ void forkandexec(command &cmd, int left, int &userIndex){
                     //cout << "\nsender:" << cmd.readUserID << "\n";
                     dup2(userPipes[userPipeIndex].fd[0], STDIN_FILENO);
                     close(userPipes[userPipeIndex].fd[0]);
+                } else {
+                    dup2(FD_NULL, STDIN_FILENO);
                 }
             }else{
                 cout << "case 1 0\n";
@@ -489,6 +499,8 @@ void forkandexec(command &cmd, int left, int &userIndex){
                         dup2(userPipes[userPipeIndex].fd[1], STDOUT_FILENO);
                         close(userPipes[userPipeIndex].fd[0]);
                         close(userPipes[userPipeIndex].fd[1]);
+                    } else {
+                        dup2(FD_NULL, STDOUT_FILENO);
                     }
                     dup2(pipes[pipes.size()-1].fd[0], STDIN_FILENO);
                     close(pipes[pipes.size()-1].fd[0]);
@@ -564,10 +576,13 @@ void forkandexec(command &cmd, int left, int &userIndex){
                     close(userPipes[senderPipeIndex].fd[1]);
                     close(userPipes[receiverPipeIndex].fd[0]);
                     userPipes.erase(userPipes.begin()+receiverPipeIndex);
-                }else if(cmd.userPipeErrorType==2){
-                    
-                }else if(cmd.userPipeErrorType==3){
-                    
+                }else if(cmd.userPipeErrorType==2){ // receiver error
+                    int senderPipeIndex = getUserPipeIndex(users[userIndex].ID ,cmd.readUserID);
+                    close(userPipes[senderPipeIndex].fd[1]);
+                }else if(cmd.userPipeErrorType==3){ // sender error
+                    int receiverPipeIndex = getUserPipeIndex( cmd.writeUserID, users[userIndex].ID);
+                    close(userPipes[receiverPipeIndex].fd[0]);
+                    userPipes.erase(userPipes.begin()+receiverPipeIndex);
                 }
             }
         }
@@ -788,10 +803,10 @@ void processToken(command &cmd, int &userIndex){
                         }
 
                         string message;
-                    
+                        // receiver first
                         int senderIndex = getUserIndexFromID(cmd.writeUserID);
                         if(senderIndex == -1){
-                            cmd.userPipeErrorType = 1;
+                            cmd.userPipeErrorType = 2;
                             message = "*** Error: user #" + to_string(cmd.writeUserID) + " does not exist yet\n";
                             if(write(users[userIndex].ssock, message.c_str(), message.size())<0){
                                 cerr << "write error:" << strerror(errno) <<"\n";
@@ -807,7 +822,7 @@ void processToken(command &cmd, int &userIndex){
                             }else{
                                 message = "*** Error: the pipe #" + to_string(cmd.writeUserID) 
                                         + "->" + to_string(users[userIndex].ID) + " does not exist yet. ***\n";
-                                cmd.userPipeErrorType = 1;
+                                cmd.userPipeErrorType = 2;
                                 if(write(users[userIndex].ssock, message.c_str(), message.size())<0){
                                     cerr << "write error:" << strerror(errno) <<"\n";
                                 }
@@ -820,7 +835,7 @@ void processToken(command &cmd, int &userIndex){
                         userPipe.receiverUserID = cmd.readUserID;
                         int receiverIndex = getUserIndexFromID(cmd.readUserID);
                         if(receiverIndex == -1){
-                            cmd.userPipeErrorType = 1;
+                            cmd.userPipeErrorType = cmd.userPipeErrorType == 2 ? 4 : 3;
                             message = "*** Error: user #" + to_string(cmd.readUserID) + " does not exist yet\n";
                             if(write(users[userIndex].ssock, message.c_str(), message.size())<0){
                                 cerr << "write error:" << strerror(errno) <<"\n";
@@ -829,7 +844,7 @@ void processToken(command &cmd, int &userIndex){
                             if(existUserPipe(userPipe.senderUserID, userPipe.receiverUserID)){
                                 message = "*** Error: the pipe #" + to_string(users[userIndex].ID) 
                                         + "->" + to_string(cmd.readUserID) + " already exists. ***\n";
-                                cmd.userPipeErrorType = 1;
+                                cmd.userPipeErrorType = cmd.userPipeErrorType == 2 ? 4 : 3;
                                 if(write(users[userIndex].ssock, message.c_str(), message.size())<0){
                                     cerr << "write error:" << strerror(errno) <<"\n";
                                 }
@@ -909,6 +924,7 @@ void processToken(command &cmd, int &userIndex){
             forkandexec(cmd, left, userIndex);
             cmd.readUserID = -1;
             cmd.writeUserID = -1;
+            cmd.userPipeErrorType = 0;
             cmd.currentCommand = "";
             cmd.commandArgument.clear();
         } 
