@@ -369,7 +369,13 @@ void welcome(int userID){
 
 void logout(int &userIndex){
     string message = "*** User '" + users[userIndex].name + "' left. ***\n";
-    broadcast(message);
+    for(int i=0;i<users.size();++i){
+        if(i!=userIndex){
+            if(write(users[i].ssock, message.c_str(),message.size())<0){
+                cerr << "write error" << strerror(errno) <<"\n";
+            }
+        }
+    }
 }
 
 void dup2toclient(int userIndex){
@@ -957,10 +963,10 @@ int processCommand(command &cmd, int &userIndex){
             decreaseNumberPipeLeft();
             dup2recovery();
         } else if(cmd.tokens[0] == "exit"){
-            cout << "before recovery" << endl;
+            //cout << "before recovery" << endl;
             logout(userIndex);
             dup2recovery();
-            cout << "after recovery" << endl;
+            //cout << "after recovery" << endl;
             FD_CLR(users[userIndex].ssock, &afds);
             removeUserPipe(users[userIndex].ID);
             decreaseNumberPipeLeft();
@@ -974,11 +980,17 @@ int processCommand(command &cmd, int &userIndex){
             decreaseNumberPipeLeft();
             dup2recovery();
         } else if(cmd.tokens[0] == "tell"){
-            unicast(userIndex, stoi(cmd.tokens[1]), cmd.tokens[2]);
+            string message = "*** " + users[userIndex].name + " told you ***: ";
+            for(int i=2;i<cmd.tokens.size();++i) message += cmd.tokens[i]+" ";
+            message += "\n"; 
+            unicast(userIndex, stoi(cmd.tokens[1]), message);
             decreaseNumberPipeLeft();
             dup2recovery();
         } else if(cmd.tokens[0] == "yell"){
-            broadcast(cmd.tokens[1]+"\n");
+            string message = "*** " + users[userIndex].name + " yelled ***: ";
+            for(int i=1;i<cmd.tokens.size();++i) message += cmd.tokens[i]+" ";
+            message += "\n";
+            broadcast(message);
             decreaseNumberPipeLeft();
             dup2recovery();
         } else if(cmd.tokens[0] == "name"){
@@ -1001,6 +1013,7 @@ int processCommand(command &cmd, int &userIndex){
 int executable(int &userIndex, string &inputCmd){
 
     stringstream ss;
+    //cout << "iputCmd : " << inputCmd << " Size : " << inputCmd.size() << endl;
     //while(cout << "% " && getline(cin, cmdLine)){
     command currentcmd;
     currentcmd.wholecommand = inputCmd;
@@ -1115,9 +1128,11 @@ void rwgserver(){
             //cout << "before accept read\n";
             if(FD_ISSET(currentfd, &rfds)){
                 //cout << "accept read\n";
+                memset(buffer, '\0', 15000);
                 int n = read(currentfd, buffer, 15000);
                 if(n<0){
                     cerr << "read error:" << strerror(errno) << "\n";
+                    continue;
                 }
                 //cout << buffer;
                 stdinfdTmp = dup(STDIN_FILENO), stdoutTmp = dup(STDOUT_FILENO), stderrTmp = dup(STDERR_FILENO);
@@ -1141,7 +1156,6 @@ void rwgserver(){
                     }
                 }
 
-                memset(buffer, '\0', 15000);
             }
         }
     }

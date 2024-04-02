@@ -341,7 +341,7 @@ void processCommand(command &cmd, int &ssock){
 }
 
 void executable(int &ssock){
-
+    
     string cmdLine;
     stringstream ss;
     while(cout << "% " && getline(cin, cmdLine)){
