@@ -1,14 +1,18 @@
 #include<iostream>
 #include<string>
+#include<stdio.h>
 #include<string.h>
 #include<sstream>
 #include<unistd.h>
-#include<map>
 #include<signal.h>
 #include<vector>
-#include<queue>
 #include<sys/wait.h>
 #include<fcntl.h>
+#include<sys/socket.h>
+#include<netinet/in.h>
+#include<map>
+#include<arpa/inet.h>
+#include<dirent.h>
 using namespace std;
 
 /*
@@ -114,6 +118,7 @@ vector<pipestruct> pipes;
 vector<pipestruct> numberPipes;
 int maxProcessNum = 500;
 int processNum = 0;
+int serverPort;
 
 void signal_child(int signal){
 	int status;
@@ -308,7 +313,7 @@ void processToken(command &cmd){
     pipes.clear();
 }
 
-void processCommand(command &cmd){
+void processCommand(command &cmd, int &ssock){
     if(isBuildinCmd(cmd)){
         cmd.commandType = 1;
         if(cmd.tokens[0] == "setenv"){
@@ -329,6 +334,7 @@ void processCommand(command &cmd){
             }
             
         } else if(cmd.tokens[0] == "exit"){
+            close(ssock);
             exit(0);
         }
         decreaseNumberPipeLeft();
@@ -339,7 +345,7 @@ void processCommand(command &cmd){
     }
 }
 
-void executable(){
+void executable(int &ssock){
 
     string cmdLine;
     stringstream ss;
@@ -356,7 +362,7 @@ void executable(){
         for(int i=0;i<tmp.size();++i){
             currentcmd.tokens.push_back(tmp[i]);
             if(currentcmd.isNumberPipe(tmp[i]) || i == tmp.size() - 1){
-                processCommand(currentcmd);
+                processCommand(currentcmd, ssock);
                 currentcmd = command{};
             }
         }
@@ -365,11 +371,75 @@ void executable(){
     }
 }
 
-int main(){
+void rwgserver(){
+    processNum = 0;
+
+    int msock;
+    if((msock = socket(AF_INET, SOCK_STREAM, 0)) < 0){
+        cerr << "Create Main Socket fail:" << strerror(errno) << endl;;
+        exit(0);
+    }
+    const int enable = 1;
+    if(setsockopt(msock, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int))<0){
+        cerr << "set socket option error:" << strerror(errno) << endl;
+    }
+
+    sockaddr_in serverAddr;
+    bzero((char *)&serverAddr, sizeof(serverAddr));
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_addr.s_addr = INADDR_ANY;
+    serverAddr.sin_port = htons(serverPort);
+
+    if(bind(msock, (const sockaddr *)&serverAddr, sizeof(serverAddr))<0){
+        cerr << "Bind socker fail:" << strerror(errno) << endl;
+        close(msock);
+        exit(0);
+    }
+
+    if(listen(msock, 30)<0){
+        cerr << "socket " << msock << "listen failed:" << strerror(errno) << endl;
+        exit(0);
+    }
+    setenv("PATH" , "bin:.", 1);
+    while(1){
+        sockaddr_in clientAddr = {};
+        bzero((char *)&clientAddr, sizeof(clientAddr));
+        unsigned int client_len = sizeof(clientAddr);
+        int ssock = accept(msock, (sockaddr *)&clientAddr, &client_len);
+        
+        int child_pid;
+        switch (child_pid = fork())
+        {
+        case 0: // child process
+            dup2(ssock, STDIN_FILENO);
+            dup2(ssock, STDOUT_FILENO);
+            dup2(ssock, STDERR_FILENO);
+            close(msock);
+            executable(ssock);
+            break;
+        case -1: // fork error
+            cerr << "fork error:\n" << strerror(errno) << endl;
+            break;
+        default: // parent process
+            close(ssock);
+            //waitpid(child_pid, NULL, 0);
+            break;
+        }
+    }
+}
+
+int main(int argc, char *argv[]){
     processNum = 0;
     signal(SIGCHLD, signal_child);
-    setenv("PATH" , "bin:.", 1);
-    executable();
+
+    if(argc < 2) {
+        cerr << "No port input\n";
+        exit(0);
+    }
+    serverPort = stoi(argv[1]);
+    rwgserver();
+    //setenv("PATH" , "bin:.", 1);
+    //executable();
     
     return 0;
 }

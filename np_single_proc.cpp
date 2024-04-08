@@ -5,6 +5,7 @@
 #include<sstream>
 #include<unistd.h>
 #include<signal.h>
+#include<algorithm>
 #include<vector>
 #include<sys/wait.h>
 #include<fcntl.h>
@@ -184,6 +185,7 @@ vector<userinfo> users;
 
 map<string, string> backupenv;
 
+bool idused[30] = {false};
 const int maxProcessNum = 500;
 const string welcomemessage = "****************************************\n** Welcome to the information server. **\n****************************************\n";
 const int FD_NULL = open("/dev/null", O_RDWR);
@@ -214,6 +216,11 @@ bool existUserPipe(int senderUserID, int receiverUserID){
         if(userPipes[i].senderUserID == senderUserID && userPipes[i].receiverUserID == receiverUserID) return true;
     }
     return false;
+}
+
+bool compareByID(const userinfo &a, const userinfo &b)
+{
+    return a.ID < b.ID;
 }
 
 int getUserIndexFromID(int userID){
@@ -964,6 +971,7 @@ int processCommand(command &cmd, int &userIndex){
             dup2recovery();
         } else if(cmd.tokens[0] == "exit"){
             //cout << "before recovery" << endl;
+            idused[users[userIndex].ID-1] = false;
             logout(userIndex);
             dup2recovery();
             //cout << "after recovery" << endl;
@@ -1107,7 +1115,14 @@ void rwgserver(){
                 cerr << "accpet error:" << strerror(errno) << "\n";
             }
             userinfo user = {};
-            user.ID = users.size()+1;
+            for(int i = 0;i<30;++i){
+                if(idused[i] == false){
+                    idused[i] = true;
+                    user.ID = i+1;
+                    break;
+                }
+            }
+            
             user.ssock = ssock;
             user.port = ntohs(clientAddr.sin_port);
             user.addr = inet_ntoa(clientAddr.sin_addr);
@@ -1116,6 +1131,7 @@ void rwgserver(){
             cout << "ID:" << user.ID <<"\nssock:" << user.ssock << "\nport:" << user.port << "\naddr:" << user.addr <<"\n";
             cout << "===========================" << endl;
             users.push_back(user);
+            std::sort(users.begin(), users.end(), compareByID);
             welcome(user.ID);
             if(write(user.ssock, "% ", 2)<0){
                 cerr << "write error:" << strerror(errno) <<"\n";
@@ -1163,7 +1179,7 @@ void rwgserver(){
 
 int main(int argc, char *argv[]){
     signal(SIGCHLD, signal_child);
-
+    for(int i=0;i<30;++i) idused[i] = false;
     if(argc < 2) {
         cerr << "No port input\n";
         exit(0);
