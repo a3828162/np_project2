@@ -989,20 +989,31 @@ int processCommand(command &cmd, int &userIndex){
             dup2recovery();
         } else if(cmd.tokens[0] == "tell"){
             string message = "*** " + users[userIndex].name + " told you ***: ";
-            for(int i=2;i<cmd.tokens.size();++i) message += cmd.tokens[i]+" ";
+            for(int i=2;i<cmd.tokens.size();++i){
+                if(i!=cmd.tokens.size();++i) message += cmd.tokens[i]+" ";
+                else message += cmd.tokens[i];
+            }
             message += "\n"; 
             unicast(userIndex, stoi(cmd.tokens[1]), message);
             decreaseNumberPipeLeft();
             dup2recovery();
         } else if(cmd.tokens[0] == "yell"){
             string message = "*** " + users[userIndex].name + " yelled ***: ";
-            for(int i=1;i<cmd.tokens.size();++i) message += cmd.tokens[i]+" ";
+            for(int i=1;i<cmd.tokens.size();++i){
+                if(i!=cmd.tokens.size()-1) message += cmd.tokens[i]+" ";
+                else message += cmd.tokens[i];
+            } 
             message += "\n";
             broadcast(message);
             decreaseNumberPipeLeft();
             dup2recovery();
         } else if(cmd.tokens[0] == "name"){
-            name(userIndex, cmd.tokens[1]);
+            string message = "";
+            for(int i=1;i<cmd.tokens.size();++i){
+                if(i!=cmd.tokens.size()-1) message += cmd.tokens[i]+" ";
+                else message += cmd.tokens[i];
+            }
+            name(userIndex, message);
             decreaseNumberPipeLeft();
             dup2recovery();
         } else {
@@ -1102,7 +1113,7 @@ void rwgserver(){
             cerr << "select fail:" << strerror(errno) << "\n";
             continue;
         }
-        
+
         if(FD_ISSET(msock, &rfds)){
             
             int ssock;
@@ -1178,6 +1189,8 @@ void rwgserver(){
 }
 
 int main(int argc, char *argv[]){
+    std::cout.setf(std::ios::unitbuf);
+    std::cerr.setf(std::ios::unitbuf);
     signal(SIGCHLD, signal_child);
     for(int i=0;i<30;++i) idused[i] = false;
     if(argc < 2) {
