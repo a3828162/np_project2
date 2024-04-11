@@ -160,7 +160,10 @@ void signal_usr1(int signal){ // print message
 }
 
 bool isBuildinCmd(command currentcmd){
-    return currentcmd.tokens[0] == "setenv" || currentcmd.tokens[0] == "printenv" || currentcmd.tokens[0] == "exit";
+    return currentcmd.tokens[0] == "setenv" || currentcmd.tokens[0] == "printenv" 
+        || currentcmd.tokens[0] == "exit" || currentcmd.tokens[0] == "who"
+        || currentcmd.tokens[0] == "tell" || currentcmd.tokens[0] == "yell"
+        || currentcmd.tokens[0] == "name";
 }
 
 int matchNumberPipeQueue(int left){
@@ -182,11 +185,51 @@ void decreaseNumberPipeLeft(){
 
 void broadcast(){
     for(int i=0; i<30;++i){
-        if(userInfoPtr[i].alive && currentIndex != i){
-            cout << i <<" "<<userInfoPtr[i].cpid<< "\n";
+        if(userInfoPtr[i].alive){
             kill(userInfoPtr[i].cpid, SIGUSR1);
-            //kill(0, SIGUSR1);
         } 
+    }
+}
+
+void who(){
+    cout << "<ID>    <nickname>  <IP:port>           <indicate me>\n";
+    for(int i=0;i<30;++i){
+        if(userInfoPtr[i].alive){
+            cout << userInfoPtr[i].ID << "   " << userInfoPtr[i].name
+                 << "   " << userInfoPtr[i].addr << ":" << userInfoPtr[i].port;
+            if(currentIndex == i) cout <<"<-me";
+            cout << '\n';
+        }
+    }
+}
+
+void name(string inputName){
+    bool exist = false;
+    for(int i=0 ;i<30;++i){
+        if(userInfoPtr[i].alive && strcmp(userInfoPtr[i].name, inputName.c_str())==0){
+            exist = true;
+            break;
+        }
+    }
+    if(exist){
+        cout << "*** User '" << inputName <<"' already exists. ***\n";
+    } else {
+        strcpy(userInfoPtr[currentIndex].name, inputName.c_str());
+        tmpMessage.clear();
+        tmpMessage = "*** Use from " + string(userInfoPtr[currentIndex].addr) + ":" 
+                    + to_string(userInfoPtr[currentIndex].port) + "is named '"
+                    + string(userInfoPtr[currentIndex].name) + "'. ***\n";
+        memset(messagePtr, '\0', 15000);
+        strcpy(messagePtr, tmpMessage.c_str());
+        broadcast();
+    }
+}
+
+void unicast(int targetID){
+    for(int i=0;i<30;++i){
+        if(userInfoPtr[i].alive && currentIndex !=i && userInfoPtr[i].ID == targetID){
+            kill(userInfoPtr[i].cpid, SIGUSR1);
+        }
     }
 }
 
@@ -356,7 +399,7 @@ void processToken(command &cmd){
     pipes.clear();
 }
 
-void processCommand(command &cmd, int &ssock){
+void processCommand(command &cmd){
     if(isBuildinCmd(cmd)){
         cmd.commandType = 1;
         if(cmd.tokens[0] == "setenv"){
@@ -377,9 +420,33 @@ void processCommand(command &cmd, int &ssock){
             }
             
         } else if(cmd.tokens[0] == "exit"){
-            close(ssock);
+            userInfoPtr[currentIndex].alive = false;
+            userInfoPtr[currentIndex].cpid = 0;
+            memset(userInfoPtr[currentIndex].name, '\0', 20);
+            strcpy(userInfoPtr[currentIndex].name, "(no name)");
+            close(userInfoPtr[currentIndex].ssock);
             exit(0);
-        } 
+        } else if(cmd.tokens[0] == "tell"){
+            tmpMessage.clear();
+            for(int i=2;i<cmd.tokens.size();++i) tmpMessage += cmd.tokens[i];
+            tmpMessage += '\n';
+            memset(messagePtr, '\0', 15000);
+            strcpy(messagePtr, tmpMessage.c_str());
+            unicast(stoi(cmd.tokens[1]));
+        } else if(cmd.tokens[0] == "yell"){
+            tmpMessage.clear();
+            for(int i=1;i<cmd.tokens.size();++i) tmpMessage += cmd.tokens[i];
+            tmpMessage += "\n";
+            memset(messagePtr, '\0', 15000);
+            strcpy(messagePtr, tmpMessage.c_str());
+            broadcast();
+        } else if(cmd.tokens[0] == "who"){
+            who();
+        } else if(cmd.tokens[0] == "name"){
+            string inputName;
+            for(int i=1;i<cmd.tokens.size();++i) inputName += cmd.tokens[i];
+            name(inputName);
+        }
         decreaseNumberPipeLeft();
     } else {
         cmd.commandType = 2;
@@ -388,7 +455,7 @@ void processCommand(command &cmd, int &ssock){
     }
 }
 
-void executable(int &ssock){
+void executable(){
 
     string cmdLine;
     stringstream ss;
@@ -405,7 +472,7 @@ void executable(int &ssock){
         for(int i=0;i<tmp.size();++i){
             currentcmd.tokens.push_back(tmp[i]);
             if(currentcmd.isNumberPipe(tmp[i]) || i == tmp.size() - 1){
-                processCommand(currentcmd, ssock);
+                processCommand(currentcmd);
                 currentcmd = command{};
             }
         }
@@ -499,7 +566,7 @@ void rwgserver(){
             strcpy(messagePtr, tmpMessage.c_str());
             broadcast();
             tmpMessage.clear();
-            executable(ssock);
+            executable();
             
             close(ssock);
             break;
@@ -517,6 +584,7 @@ void rwgserver(){
 }
 
 int main(int argc, char *argv[]){
+
     processNum = 0;
     currentIndex = -1;
     std::cout.setf(std::ios::unitbuf);
@@ -531,8 +599,7 @@ int main(int argc, char *argv[]){
     }
     serverPort = stoi(argv[1]);
     rwgserver();
-    //setenv("PATH" , "bin:.", 1);
-    //executable();
+    signal_terminate(SIGINT);
     
     return 0;
 }
