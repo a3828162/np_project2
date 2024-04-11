@@ -13,6 +13,8 @@
 #include<map>
 #include<arpa/inet.h>
 #include<dirent.h>
+#include<sys/shm.h>
+#include<sys/mman.h>
 using namespace std;
 
 /*
@@ -114,16 +116,47 @@ struct pipestruct
     int fd[2];
 };
 
+struct userinfo
+{
+    bool alive;
+    int ID;
+    int ssock;
+    int port;
+    pid_t cpid;
+    char name[20];
+    char addr[INET_ADDRSTRLEN];
+};
+
 vector<pipestruct> pipes;
 vector<pipestruct> numberPipes;
+userinfo currentUser = {};
+bool idUsed[30] = {false};
 int maxProcessNum = 500;
 int processNum = 0;
-int serverPort;
+int serverPort, shmUserInfos, currentIndex, shmMessage;
+string tmpMessage;
+userinfo *userInfoPtr;
+char* messagePtr;
 
 void signal_child(int signal){
+    if(signal != SIGCHLD) return;
 	int status;
 	//while(waitpid(-1,&status,WNOHANG) > 0){}
     while(waitpid(-1,&status,WNOHANG) > 0){ --processNum; } // add
+}
+
+void signal_terminate(int signal){
+    if(signal != SIGINT) return;
+    munmap(messagePtr, 15000);
+	munmap(userInfoPtr, 30 * sizeof(userinfo));
+    shm_unlink("UserInfos");
+    shm_unlink("Message");
+    exit(0);
+}
+
+void signal_usr1(int signal){ // print message
+    if(signal != SIGUSR1) return;
+    cout << string(messagePtr);
 }
 
 bool isBuildinCmd(command currentcmd){
@@ -143,6 +176,16 @@ void decreaseNumberPipeLeft(){
         if(numberPipes[i].numberleft < 0){
             numberPipes.erase(numberPipes.begin()+i);
             --i;
+        } 
+    }
+}
+
+void broadcast(){
+    for(int i=0; i<30;++i){
+        if(userInfoPtr[i].alive && currentIndex != i){
+            cout << i <<" "<<userInfoPtr[i].cpid<< "\n";
+            kill(userInfoPtr[i].cpid, SIGUSR1);
+            //kill(0, SIGUSR1);
         } 
     }
 }
@@ -336,7 +379,7 @@ void processCommand(command &cmd, int &ssock){
         } else if(cmd.tokens[0] == "exit"){
             close(ssock);
             exit(0);
-        }
+        } 
         decreaseNumberPipeLeft();
     } else {
         cmd.commandType = 2;
@@ -373,7 +416,8 @@ void executable(int &ssock){
 
 void rwgserver(){
     processNum = 0;
-
+    signal(SIGCHLD, signal_child);
+    signal(SIGUSR1, signal_usr1);
     int msock;
     if((msock = socket(AF_INET, SOCK_STREAM, 0)) < 0){
         cerr << "Create Main Socket fail:" << strerror(errno) << endl;;
@@ -401,12 +445,39 @@ void rwgserver(){
         exit(0);
     }
     setenv("PATH" , "bin:.", 1);
+
+    shmUserInfos = shm_open("UserInfos", O_CREAT | O_RDWR, 0666);
+    ftruncate(shmUserInfos, 30 * sizeof(userinfo));
+    userInfoPtr = (userinfo *)mmap(NULL, 30 * sizeof(userinfo), PROT_READ | PROT_WRITE, MAP_SHARED, shmUserInfos, 0);
+    for(int i=0;i<30;++i){
+        userInfoPtr[i].alive = false;
+        userInfoPtr[i].ID = 0;
+        userInfoPtr[i].port = 0;
+        userInfoPtr[i].ssock = 0;
+        userInfoPtr[i].cpid = 0;
+        memset(userInfoPtr[i].addr, '\0', sizeof(userInfoPtr[i].addr));
+        memset(userInfoPtr[i].name, '\0', sizeof(userInfoPtr[i].name));
+        strcpy(userInfoPtr[i].name, "(no name)");
+    }
+
+    shmMessage = shm_open("Message", O_CREAT | O_RDWR, 0666);
+    ftruncate(shmMessage, 15000);
+    messagePtr = (char *)mmap(NULL, 15000, PROT_READ | PROT_WRITE, MAP_SHARED, shmMessage, 0);
+    memset(messagePtr, '\0', 15000);
+
     while(1){
         sockaddr_in clientAddr = {};
         bzero((char *)&clientAddr, sizeof(clientAddr));
         unsigned int client_len = sizeof(clientAddr);
         int ssock = accept(msock, (sockaddr *)&clientAddr, &client_len);
         
+        for(int i=0;i<30;++i){
+            if(!idUsed[i]){
+                currentIndex = i;
+                idUsed[i] = true;
+                break;
+            }
+        }
         int child_pid;
         switch (child_pid = fork())
         {
@@ -415,13 +486,30 @@ void rwgserver(){
             dup2(ssock, STDOUT_FILENO);
             dup2(ssock, STDERR_FILENO);
             close(msock);
+            userInfoPtr[currentIndex].ID = currentIndex+1;
+            userInfoPtr[currentIndex].ssock = ssock;
+            userInfoPtr[currentIndex].port = ntohs(clientAddr.sin_port);
+            strcpy(userInfoPtr[currentIndex].addr, inet_ntoa(clientAddr.sin_addr));
+            userInfoPtr[currentIndex].alive = true;
+			cout << "****************************************\n";
+			cout << "** Welcome to the information server. **\n";
+			cout << "****************************************\n";
+            tmpMessage = "*** User '" + string(userInfoPtr[currentIndex].name) + "' entered from " + string(userInfoPtr[currentIndex].addr) + ":" + to_string(userInfoPtr[currentIndex].port) + ". ***\n";"*** User '" + string(userInfoPtr[currentIndex].name) + "' entered from " + string(userInfoPtr[currentIndex].addr) + ":" + to_string(userInfoPtr[currentIndex].port) + ". ***\n";
+            memset(messagePtr, '\0', 15000);
+            strcpy(messagePtr, tmpMessage.c_str());
+            broadcast();
+            tmpMessage.clear();
             executable(ssock);
+            
+            close(ssock);
             break;
         case -1: // fork error
             cerr << "fork error:\n" << strerror(errno) << endl;
             break;
         default: // parent process
+            userInfoPtr[currentIndex].cpid = child_pid;
             close(ssock);
+            currentIndex = -1;
             //waitpid(child_pid, NULL, 0);
             break;
         }
@@ -430,7 +518,12 @@ void rwgserver(){
 
 int main(int argc, char *argv[]){
     processNum = 0;
+    currentIndex = -1;
+    std::cout.setf(std::ios::unitbuf);
+    std::cerr.setf(std::ios::unitbuf);
     signal(SIGCHLD, signal_child);
+    signal(SIGINT, signal_terminate);
+    signal(SIGUSR1, signal_usr1);
 
     if(argc < 2) {
         cerr << "No port input\n";
