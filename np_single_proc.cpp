@@ -1083,7 +1083,7 @@ void rwgserver(){
                 }
                 //cout << buffer;
                 stdinfdTmp = dup(STDIN_FILENO), stdoutTmp = dup(STDOUT_FILENO), stderrTmp = dup(STDERR_FILENO);
-                cout << "Try1" << endl;
+                //cout << "Try1" << endl;
                 string tmpS(buffer);
                 setUserEnv(i);
                 numberPipes = users[i].userNumberPipes;
