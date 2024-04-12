@@ -160,7 +160,6 @@ struct userpipestruct
 vector<pipestruct> pipes;
 vector<pipestruct> numberPipes;
 userinfo currentUser = {};
-bool idUsed[30] = {false};
 int maxProcessNum = 500;
 int processNum = 0;
 int serverPort, shmUserInfos, currentIndex, shmMessage, shmUserPipes;
@@ -417,6 +416,8 @@ void forkandexec(command &cmd, int left){
                         if(cmd.userPipeErrorType==0){ 
                             close(userPipeInFd);
                             userPipePtr[cmd.writeUserID - 1].fd[currentIndex] = -1;
+                            string fifoName = "user_pipe/" + to_string(cmd.writeUserID) + "-" + to_string(currentIndex+1);
+                            unlink(fifoName.c_str());
                         }
                         close(pipes[pipes.size()-1].fd[1]);
                     }else{
@@ -441,18 +442,23 @@ void forkandexec(command &cmd, int left){
                 if(cmd.userPipeErrorType==0){
                     close(userPipeInFd);
                     userPipePtr[cmd.writeUserID - 1].fd[currentIndex] = -1;
+                    string fifoName = "user_pipe/" + to_string(cmd.writeUserID) + "-" + to_string(currentIndex+1);
+                    unlink(fifoName.c_str());
                 }
             } else if(cmd.previosOP == 6 && cmd.nextOP == 5){ // ls >1 <1
                 if(cmd.userPipeErrorType==0){
                     close(userPipeOutFd);
                     close(userPipeInFd);
                     userPipePtr[cmd.writeUserID - 1].fd[currentIndex] = -1;
+                    string fifoName = "user_pipe/" + to_string(cmd.writeUserID) + "-" + to_string(currentIndex+1);
+                    unlink(fifoName.c_str());
                 }else if(cmd.userPipeErrorType==2){ // receiver error
                     close(userPipeOutFd);
                 }else if(cmd.userPipeErrorType==3){ // sender error
                     close(userPipeInFd);
                     userPipePtr[cmd.writeUserID - 1].fd[currentIndex] = -1;
-                    
+                    string fifoName = "user_pipe/" + to_string(cmd.writeUserID) + "-" + to_string(currentIndex+1);
+                    unlink(fifoName.c_str());                    
                 }
             }
         }
@@ -522,7 +528,7 @@ void processToken(command &cmd){
                                     + to_string(userInfoPtr[currentIndex].ID) + ") just received from " 
                                     + userInfoPtr[senderIndex].name + " (#" 
                                     + to_string(userInfoPtr[senderIndex].ID) + ") by '" 
-                                    + cmd.wholecommand +"' ***\n";
+                                    + cmd.wholecommand.substr(0,cmd.wholecommand.size()-1) +"' ***\n";
                                 memset(messagePtr, '\0', 15000);
                                 strcpy(messagePtr, tmpMessage.c_str());
                                 broadcast();
@@ -562,7 +568,7 @@ void processToken(command &cmd){
                                 tmpMessage.clear();
                                 tmpMessage = "*** " + string(userInfoPtr[currentIndex].name) + " (#" 
                                         + to_string(userInfoPtr[currentIndex].ID) + ") just piped '" 
-                                        + cmd.wholecommand + "' to " + string(userInfoPtr[receiverIndex].name) + " (#" 
+                                        + cmd.wholecommand.substr(0,cmd.wholecommand.size()-1) + "' to " + string(userInfoPtr[receiverIndex].name) + " (#" 
                                         + to_string(userInfoPtr[receiverIndex].ID) + ") ***\n";
                                 memset(messagePtr, '\0', 15000);
                                 strcpy(messagePtr, tmpMessage.c_str());
@@ -612,7 +618,7 @@ void processToken(command &cmd){
                                     + to_string(userInfoPtr[currentIndex].ID) + ") just received from " 
                                     + userInfoPtr[senderIndex].name + " (#" 
                                     + to_string(userInfoPtr[senderIndex].ID) + ") by '" 
-                                    + cmd.wholecommand +"' ***\n";
+                                    + cmd.wholecommand.substr(0,cmd.wholecommand.size()-1) +"' ***\n";
                                 memset(messagePtr, '\0', 15000);
                                 strcpy(messagePtr, tmpMessage.c_str());
                                 broadcast();
@@ -649,7 +655,7 @@ void processToken(command &cmd){
                                 tmpMessage.clear();
                                 tmpMessage = "*** " + string(userInfoPtr[currentIndex].name) + " (#" 
                                         + to_string(userInfoPtr[currentIndex].ID) + ") just piped '" 
-                                        + cmd.wholecommand + "' to " + userInfoPtr[receiverIndex].name + " (#" 
+                                        + cmd.wholecommand.substr(0,cmd.wholecommand.size()-1) + "' to " + userInfoPtr[receiverIndex].name + " (#" 
                                         + to_string(userInfoPtr[receiverIndex].ID) + ") ***\n";
                                 memset(messagePtr, '\0', 15000);
                                 strcpy(messagePtr, tmpMessage.c_str());                                    
@@ -704,7 +710,7 @@ void processToken(command &cmd){
                                     + to_string(userInfoPtr[currentIndex].ID) + ") just received from " 
                                     + string(userInfoPtr[senderIndex].name) + " (#" 
                                     + to_string(userInfoPtr[senderIndex].ID) + ") by '" 
-                                    + cmd.wholecommand +"' ***\n";
+                                    + cmd.wholecommand.substr(0,cmd.wholecommand.size()-1) + "' ***\n";
                                 memset(messagePtr, '\0', 15000);
                                 strcpy(messagePtr, tmpMessage.c_str());                
                                 broadcast();
@@ -761,9 +767,25 @@ void processCommand(command &cmd){
         } else if(cmd.tokens[0] == "exit"){
             userInfoPtr[currentIndex].alive = false;
             userInfoPtr[currentIndex].cpid = 0;
+            userInfoPtr[currentIndex].ID = 0;
             memset(userInfoPtr[currentIndex].name, '\0', 20);
             strcpy(userInfoPtr[currentIndex].name, "(no name)");
             close(userInfoPtr[currentIndex].ssock);
+            for(int i=0;i<30;++i){
+                if(userPipePtr[currentIndex].fd[i] >= 0){
+                    
+                    userPipePtr[currentIndex].fd[i] = -1;
+                    string fifoName = "user_pipe/" + to_string(currentIndex+1) + "-" + to_string(i+1);
+                    cout <<"1:" << fifoName << endl;
+                    unlink(fifoName.c_str());
+                }
+                if(userPipePtr[i].fd[currentIndex] >= 0){
+                    close(userPipePtr[i].fd[currentIndex]);
+                    userPipePtr[i].fd[currentIndex] = -1;
+                    string fifoName = "user_pipe/" + to_string(i+1) + "-" + to_string(currentIndex+1);
+                    unlink(fifoName.c_str());
+                }
+            }
             exit(0);
         } else if(cmd.tokens[0] == "tell"){
             tmpMessage.clear();
@@ -888,9 +910,9 @@ void rwgserver(){
         int ssock = accept(msock, (sockaddr *)&clientAddr, &client_len);
         
         for(int i=0;i<30;++i){
-            if(!idUsed[i]){
+            if(!userInfoPtr[i].alive){
                 currentIndex = i;
-                idUsed[i] = true;
+                userInfoPtr[i].alive = true;
                 break;
             }
         }
