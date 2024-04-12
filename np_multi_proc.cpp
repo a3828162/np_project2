@@ -1,4 +1,5 @@
 #include<iostream>
+#include<sys/stat.h>
 #include<string>
 #include<stdio.h>
 #include<string.h>
@@ -39,12 +40,18 @@ public:
     int commandType;
     int previosOP;
     int nextOP;
+    int readUserID;
+    int writeUserID;
+    int userPipeErrorType;
     string redirectFileName;
     string currentCommand;
+    string wholecommand;
     vector<string> commandArgument;
     vector<string> tokens;
 
     bool isNumberPipe(string token);
+    bool isUserPipe(string token);
+    bool isNormalPipe(string token);
     bool isOPToken(string token);
     void setNextOP(string token);
     char **buildArgv();
@@ -56,9 +63,13 @@ command::command(/* args */)
 {
     currentCommand = "";
     redirectFileName = "";
+    wholecommand = "";
     commandType = 0;
     nextOP = 0;
     previosOP = 0;
+    userPipeErrorType = 0;
+    readUserID = -1;
+    writeUserID = -1;
 }
 
 command::~command()
@@ -72,11 +83,22 @@ bool command::isNumberPipe(string token){
     return (token[0]=='|'||token[0]=='!')&&isdigit(token[1]);
 }
 
+bool command::isUserPipe(string token){
+    if(token.size()<2) return false;
+    return (token[0]=='<'||token[0]=='>')&&isdigit(token[1]);
+}
+
+bool command::isNormalPipe(string token){
+    if(token == "|" || token == ">") return true;
+    else if((token[0]=='|' || token[0]=='!')&&isdigit(token[1])) return true;
+    return false;
+}
+
 bool command::isOPToken(string token){
     if(token == "|" || token == ">"){
         return true;
     }else if(token.size() >= 2 &&
-     (token[0] == '|' || token[0] == '!') &&
+     (token[0] == '|' || token[0] == '!' || token[0] == '>' || token[0] == '<') &&
      isdigit(token[1])){
         return true;
     }
@@ -92,7 +114,9 @@ void command::setNextOP(string token){
     } else if(token.size()>=2){
         if(token[0] == '|' && isdigit(token[1])) nextOP = 3;
         else if(token[0] = '!' && isdigit(token[1])) nextOP = 4;
-    }
+        else if(token[0] = '>' && isdigit(token[1])) nextOP = 5;
+        else if(token[0] = '<' && isdigit(token[1])) nextOP = 6;
+    } 
 }
 
 char **command::buildArgv(){
@@ -127,16 +151,25 @@ struct userinfo
     char addr[INET_ADDRSTRLEN];
 };
 
+struct userpipestruct
+{
+    int a;
+    int fd[30];
+};
+
 vector<pipestruct> pipes;
 vector<pipestruct> numberPipes;
 userinfo currentUser = {};
 bool idUsed[30] = {false};
 int maxProcessNum = 500;
 int processNum = 0;
-int serverPort, shmUserInfos, currentIndex, shmMessage;
+int serverPort, shmUserInfos, currentIndex, shmMessage, shmUserPipes;
+const int FD_NULL = open("/dev/null", O_RDWR);
 string tmpMessage;
 userinfo *userInfoPtr;
-char* messagePtr;
+userpipestruct *userPipePtr;
+char *messagePtr;
+int userPipeInFd, userPipeOutFd;
 
 void signal_child(int signal){
     if(signal != SIGCHLD) return;
@@ -149,8 +182,16 @@ void signal_terminate(int signal){
     if(signal != SIGINT) return;
     munmap(messagePtr, 15000);
 	munmap(userInfoPtr, 30 * sizeof(userinfo));
+    munmap(userPipePtr, 30 * sizeof(userpipestruct));
     shm_unlink("UserInfos");
     shm_unlink("Message");
+    shm_unlink("UserPipes");
+    for(int i = 0;i<30;++i){
+        for(int j=0;j<30;++j){
+            string fifoName = "user_pipe/" + to_string(i+1) + "-" + to_string(j+1);
+            unlink(fifoName.c_str());
+        }
+    }
     exit(0);
 }
 
@@ -159,11 +200,26 @@ void signal_usr1(int signal){ // print message
     cout << string(messagePtr);
 }
 
+void signal_usr2(int signal){ // print message
+    if(signal != SIGUSR2) return;
+    for(int i=0;i<30;++i){
+        if(userPipePtr[i].fd[currentIndex] == -2){
+            string fifoName = "user_pipe/" + to_string(i+1) + "-" + to_string(currentIndex+1);
+            userPipePtr[i].fd[currentIndex] = open(fifoName.c_str(), O_RDONLY | O_NONBLOCK);
+        }
+    }
+}
+
 bool isBuildinCmd(command currentcmd){
     return currentcmd.tokens[0] == "setenv" || currentcmd.tokens[0] == "printenv" 
         || currentcmd.tokens[0] == "exit" || currentcmd.tokens[0] == "who"
         || currentcmd.tokens[0] == "tell" || currentcmd.tokens[0] == "yell"
         || currentcmd.tokens[0] == "name";
+}
+
+bool existUserPipe(int senderUserIndex, int receiverUserIndex){
+    if(userPipePtr[senderUserIndex].fd[receiverUserIndex]>=0) return true;
+    return false;
 }
 
 int matchNumberPipeQueue(int left){
@@ -252,6 +308,17 @@ void forkandexec(command &cmd, int left){
             }
         }
 
+        if(cmd.previosOP == 6 && (cmd.nextOP >= 1 && cmd.nextOP <=5)){
+            if(cmd.userPipeErrorType == 0){
+                dup2(userPipeInFd, STDIN_FILENO);
+                close(userPipeInFd);
+                cmd.previosOP = 0;
+            } else {
+                dup2(FD_NULL, STDIN_FILENO);
+                cmd.previosOP = 0;
+            }
+        }
+
         if(cmd.previosOP == 0 && cmd.nextOP != 0) { // ex. 'ls' | ls
             
             if( pipes.size() == 0 && (cmd.nextOP == 3 || cmd.nextOP == 4) && left != 0){ // 'ls' |2
@@ -266,16 +333,32 @@ void forkandexec(command &cmd, int left){
                 int filefd = open(cmd.redirectFileName.c_str(), O_TRUNC | O_RDWR | O_CREAT, S_IRWXU | S_IRWXG | S_IRWXO);
                 dup2(filefd, STDOUT_FILENO);
                 close(filefd);
+            }else if(cmd.nextOP==5){
+                if(cmd.userPipeErrorType==0){
+                    dup2(userPipeOutFd, STDOUT_FILENO);
+                    close(userPipeOutFd);
+                } else {
+                    dup2(FD_NULL, STDOUT_FILENO);
+                }
             } else { // not appear previosOP == 0 , nextOP == 3(4) this case, because pipes.size() will == 0  ex. ls |
                 // ex. 'ls' | cat
+                //cout << "case 0 1\n";
                 dup2(pipes[pipes.size()-1].fd[1], STDOUT_FILENO);
                 close(pipes[pipes.size()-1].fd[1]);
                 close(pipes[pipes.size()-1].fd[0]);
             }
-
         } else if(cmd.previosOP != 0 && cmd.nextOP == 0){ // previosOP == 1 , nextOP == 0   ex. ls | 'ls'
-            dup2(pipes[pipes.size()-1].fd[0], STDIN_FILENO); 
-            close(pipes[pipes.size()-1].fd[0]);
+            if(cmd.previosOP==6){ // ls <2
+                if(cmd.userPipeErrorType==0){
+                    dup2(userPipeInFd, STDIN_FILENO);
+                    close(userPipeInFd);
+                } else {
+                    dup2(FD_NULL, STDIN_FILENO);
+                }
+            }else{
+                dup2(pipes[pipes.size()-1].fd[0], STDIN_FILENO); 
+                close(pipes[pipes.size()-1].fd[0]);
+            }
         } else if(cmd.previosOP != 0 && cmd.nextOP != 0){
             if(cmd.nextOP != 2){
                 if(cmd.nextOP == 3 || cmd.nextOP == 4){ // ex. ls | 'cat' |2 
@@ -288,7 +371,17 @@ void forkandexec(command &cmd, int left){
                         close(numberPipes[index].fd[1]);
                         close(numberPipes[index].fd[0]);
                     }   
-                }else{ // ex. ls | 'cat' | cat
+                } else if(cmd.previosOP==1 && cmd.nextOP == 5){
+                    if(cmd.userPipeErrorType==0){
+
+                        dup2(userPipeOutFd, STDOUT_FILENO);
+                        close(userPipeOutFd);
+                    } else {
+                        dup2(FD_NULL, STDOUT_FILENO);
+                    }
+                    dup2(pipes[pipes.size()-1].fd[0], STDIN_FILENO);
+                    close(pipes[pipes.size()-1].fd[0]);
+                } else{ // ex. ls | 'cat' | cat
                     dup2(pipes[pipes.size()-2].fd[0], STDIN_FILENO);
                     close(pipes[pipes.size()-2].fd[0]);
                     dup2(pipes[pipes.size()-1].fd[1], STDOUT_FILENO);
@@ -319,15 +412,54 @@ void forkandexec(command &cmd, int left){
             } else if(cmd.previosOP != 0 && cmd.nextOP == 0){ // ex. ls | 'cat'
                 close(pipes[pipes.size()-1].fd[0]);
             } else if(cmd.previosOP != 0 && cmd.nextOP != 0){ 
-                if(cmd.nextOP == 1){ // // ls | 'cat' | cat
-                    close(pipes[pipes.size()-2].fd[0]);
-                    close(pipes[pipes.size()-1].fd[1]);
+                if(cmd.nextOP == 1){ // ls | 'cat' | cat or 
+                    if(cmd.previosOP == 6){ // cat <1 | cat 
+                        if(cmd.userPipeErrorType==0){ 
+                            close(userPipeInFd);
+                            userPipePtr[cmd.writeUserID - 1].fd[currentIndex] = -1;
+                        }
+                        close(pipes[pipes.size()-1].fd[1]);
+                    }else{
+                        close(pipes[pipes.size()-2].fd[0]);
+                        close(pipes[pipes.size()-1].fd[1]);
+                    }
+                } else if(cmd.previosOP == 1 && cmd.nextOP == 5){ // ls | cat >1
+                    if(cmd.userPipeErrorType==0){
+                        close(userPipeOutFd);
+                    }
+                    close(pipes[pipes.size()-1].fd[0]);
                 } else { // ls | 'cat' |2 or ls | 'cat' > a.html
                     close(pipes[pipes.size()-1].fd[0]);
                 }
             }
+        } else {
+            if(cmd.previosOP == 0 && cmd.nextOP == 5){ // ls >1
+                if(cmd.userPipeErrorType==0){
+                    close(userPipeOutFd);
+                }
+            } else if(cmd.previosOP == 6 && cmd.nextOP == 0){ // cat <1
+                if(cmd.userPipeErrorType==0){
+                    close(userPipeInFd);
+                    userPipePtr[cmd.writeUserID - 1].fd[currentIndex] = -1;
+                }
+            } else if(cmd.previosOP == 6 && cmd.nextOP == 5){ // ls >1 <1
+                if(cmd.userPipeErrorType==0){
+                    close(userPipeOutFd);
+                    close(userPipeInFd);
+                    userPipePtr[cmd.writeUserID - 1].fd[currentIndex] = -1;
+                }else if(cmd.userPipeErrorType==2){ // receiver error
+                    close(userPipeOutFd);
+                }else if(cmd.userPipeErrorType==3){ // sender error
+                    close(userPipeInFd);
+                    userPipePtr[cmd.writeUserID - 1].fd[currentIndex] = -1;
+                    
+                }
+            }
         }
-
+        
+        if(cmd.previosOP == 6 && (cmd.nextOP >= 1 && cmd.nextOP <=4)){
+            cmd.previosOP = 0;
+        }
         for(int i=0;i<numberPipes.size();++i){ // close all numberpipe when left = 0
             if(numberPipes[i].numberleft == 0){
                 close(numberPipes[i].fd[1]);
@@ -336,7 +468,6 @@ void forkandexec(command &cmd, int left){
         }
 
         int status = 0;
-        usleep(20000); 
         if(cmd.nextOP == 1 || cmd.nextOP == 3 || cmd.nextOP == 4){ // | |2 !2 don't hang on forever
             //waitpid(-1,&status,WNOHANG);
             if(waitpid(-1,&status,WNOHANG)>0){ // add
@@ -374,6 +505,76 @@ void processToken(command &cmd){
                         numberPipes[numberPipes.size()-1].pipetype = cmd.nextOP;
                         numberPipes[numberPipes.size()-1].numberleft = left;
                     }
+                } else if(cmd.isUserPipe(cmd.tokens[i])){
+                    if(cmd.tokens[i][0]=='<'){ // cat <2 // 6,0
+                        cmd.writeUserID = stoi(cmd.tokens[i].substr(1));
+                        cmd.previosOP = 6;
+                        int senderIndex = cmd.writeUserID - 1;
+                        if(!userInfoPtr[senderIndex].alive){
+                            cmd.userPipeErrorType = 1;
+                            tmpMessage.clear();
+                            tmpMessage = "*** Error: user #" + to_string(cmd.writeUserID) + " does not exist yet\n";
+                            cout << tmpMessage;
+                        } else {
+                            if(existUserPipe(senderIndex , currentIndex)){
+                                tmpMessage.clear();
+                                tmpMessage = "*** " + string(userInfoPtr[currentIndex].name) + " (#" 
+                                    + to_string(userInfoPtr[currentIndex].ID) + ") just received from " 
+                                    + userInfoPtr[senderIndex].name + " (#" 
+                                    + to_string(userInfoPtr[senderIndex].ID) + ") by '" 
+                                    + cmd.wholecommand +"' ***\n";
+                                memset(messagePtr, '\0', 15000);
+                                strcpy(messagePtr, tmpMessage.c_str());
+                                broadcast();
+                                userPipeInFd = userPipePtr[senderIndex].fd[currentIndex];
+                            }else{
+                                tmpMessage.clear();
+                                tmpMessage = "*** Error: the pipe #" + to_string(cmd.writeUserID) 
+                                        + "->" + to_string(userInfoPtr[currentIndex].ID) + " does not exist yet. ***\n";
+                                cmd.userPipeErrorType = 1;
+                                cout << tmpMessage;
+                            }
+                        }
+
+                    } else if(cmd.tokens[i][0]=='>'){ // cat >2 or ls | cat >2 // 0,5 or 1,5
+                        cmd.readUserID = stoi(cmd.tokens[i].substr(1));
+                        cmd.nextOP = 5;
+                        //userpipestruct userPipe;
+                        //userPipe.senderUserID = users[userIndex].ID;
+                        //userPipe.receiverUserID = stoi(cmd.tokens[i].substr(1));
+                        int senderUserID = userInfoPtr[currentIndex].ID;
+                        int receiverUserID = stoi(cmd.tokens[i].substr(1));
+                        string message;
+                        int receiverIndex = receiverUserID - 1;
+                        if(!userInfoPtr[receiverIndex].alive){
+                            cmd.userPipeErrorType = 1;
+                            tmpMessage.clear();
+                            tmpMessage = "*** Error: user #" + to_string(cmd.readUserID) + " does not exist yet\n";
+                            cout << tmpMessage;
+                        } else {
+                            if(existUserPipe(senderUserID - 1, receiverIndex)){
+                                tmpMessage.clear();
+                                tmpMessage = "*** Error: the pipe #" + to_string(userInfoPtr[currentIndex].ID) 
+                                        + "->" + to_string(cmd.readUserID) + " already exists. ***\n";
+                                cmd.userPipeErrorType = 1;
+                                cout << tmpMessage;
+                            } else {
+                                tmpMessage.clear();
+                                tmpMessage = "*** " + string(userInfoPtr[currentIndex].name) + " (#" 
+                                        + to_string(userInfoPtr[currentIndex].ID) + ") just piped '" 
+                                        + cmd.wholecommand + "' to " + string(userInfoPtr[receiverIndex].name) + " (#" 
+                                        + to_string(userInfoPtr[receiverIndex].ID) + ") ***\n";
+                                memset(messagePtr, '\0', 15000);
+                                strcpy(messagePtr, tmpMessage.c_str());
+                                broadcast();
+                                string fifoName = "user_pipe/" + to_string(senderUserID) + "-" + to_string(receiverUserID);
+                                mkfifo(fifoName.c_str(), 0666);
+                                userPipePtr[senderUserID - 1].fd[receiverIndex] = -2;
+                                kill(userInfoPtr[receiverIndex].cpid, SIGUSR2);
+                                userPipeOutFd = open(fifoName.c_str(), O_WRONLY);
+                            }
+                        }
+                    }
                 }
             } 
             else { // ls '|' ls or ls '>' a.html
@@ -381,8 +582,143 @@ void processToken(command &cmd){
                 if(cmd.nextOP == 1){
                     pipes.push_back(pipestruct{});
                     if(pipe(pipes[pipes.size()-1].fd) < 0) {
+                        
                         cerr << "create pipe fail" << endl;
                     }
+                }else if(cmd.isUserPipe(cmd.tokens[i]) && i+1 < cmd.tokens.size()){
+                    if(cmd.isUserPipe(cmd.tokens[i+1])){ // cat <2 >1 or cat >1 <2
+                        cmd.previosOP = 6;
+                        cmd.nextOP = 5;
+                        if(cmd.tokens[i][0] == '<'){ // cat <2 >1
+                            cmd.writeUserID = stoi(cmd.tokens[i].substr(1));
+                            cmd.readUserID = stoi(cmd.tokens[i+1].substr(1));
+                        } else { // cat >1 <2                                
+                            cmd.readUserID = stoi(cmd.tokens[i].substr(1));
+                            cmd.writeUserID = stoi(cmd.tokens[i+1].substr(1));
+                        }
+
+                        string message;
+                        // receiver first
+                        int senderIndex = cmd.writeUserID - 1;
+                        if(!userInfoPtr[senderIndex].alive){
+                            cmd.userPipeErrorType = 2;
+                            tmpMessage.clear();
+                            tmpMessage = "*** Error: user #" + to_string(cmd.writeUserID) + " does not exist yet\n";
+                            cout << tmpMessage;
+                        } else {
+                            if(existUserPipe(cmd.writeUserID, userInfoPtr[currentIndex].ID)){
+                                tmpMessage.clear();
+                                tmpMessage = "*** " + string(userInfoPtr[currentIndex].name) + " (#" 
+                                    + to_string(userInfoPtr[currentIndex].ID) + ") just received from " 
+                                    + userInfoPtr[senderIndex].name + " (#" 
+                                    + to_string(userInfoPtr[senderIndex].ID) + ") by '" 
+                                    + cmd.wholecommand +"' ***\n";
+                                memset(messagePtr, '\0', 15000);
+                                strcpy(messagePtr, tmpMessage.c_str());
+                                broadcast();
+                                userPipeInFd = userPipePtr[senderIndex].fd[currentIndex];
+                            }else{
+                                tmpMessage.clear();
+                                tmpMessage = "*** Error: the pipe #" + to_string(cmd.writeUserID) 
+                                        + "->" + to_string(userInfoPtr[currentIndex].ID) + " does not exist yet. ***\n";
+                                cmd.userPipeErrorType = 2;
+                                cout << tmpMessage;
+                            }
+                        }
+
+                        // sender second
+                        //userpipestruct userPipe;
+                        //userPipe.senderUserID = users[userIndex].ID;
+                        //userPipe.receiverUserID = cmd.readUserID;
+                        int senderUserID = userInfoPtr[currentIndex].ID;
+                        int receiverUserID = cmd.readUserID;
+                        int receiverIndex = receiverUserID - 1;
+                        if(!userInfoPtr[receiverIndex].alive){
+                            cmd.userPipeErrorType = cmd.userPipeErrorType == 2 ? 4 : 3;
+                            tmpMessage.clear();
+                            tmpMessage = "*** Error: user #" + to_string(cmd.readUserID) + " does not exist yet\n";
+                            cout << tmpMessage;
+                        } else {
+                            if(existUserPipe(senderUserID - 1, receiverUserID - 1)){
+                                tmpMessage.clear();
+                                tmpMessage = "*** Error: the pipe #" + to_string(userInfoPtr[currentIndex].ID) 
+                                        + "->" + to_string(cmd.readUserID) + " already exists. ***\n";
+                                cmd.userPipeErrorType = cmd.userPipeErrorType == 2 ? 4 : 3;
+                                cout << tmpMessage;
+                            } else {
+                                tmpMessage.clear();
+                                tmpMessage = "*** " + string(userInfoPtr[currentIndex].name) + " (#" 
+                                        + to_string(userInfoPtr[currentIndex].ID) + ") just piped '" 
+                                        + cmd.wholecommand + "' to " + userInfoPtr[receiverIndex].name + " (#" 
+                                        + to_string(userInfoPtr[receiverIndex].ID) + ") ***\n";
+                                memset(messagePtr, '\0', 15000);
+                                strcpy(messagePtr, tmpMessage.c_str());                                    
+                                broadcast();
+
+                                string fifoName = "user_pipe/" + to_string(senderUserID) + "-" + to_string(receiverUserID);
+                                mkfifo(fifoName.c_str(), 0666);
+                                userPipePtr[senderUserID - 1].fd[receiverIndex] = -2;
+                                kill(userInfoPtr[receiverIndex].cpid, SIGUSR2);
+                                userPipeOutFd = open(fifoName.c_str(), O_WRONLY);
+                                /*if(pipe(userPipe.fd)<0){
+                                    cerr << "create pipe error:" << strerror(errno) <<"\n"; 
+                                }
+                                userPipes.push_back(userPipe);*/
+                            }
+                        }
+                    }else if(cmd.isNormalPipe(cmd.tokens[i+1])){ // cat <2 |(|1, >)
+                        cmd.writeUserID = stoi(cmd.tokens[i].substr(1));
+                        cmd.previosOP = 6;
+                        cmd.setNextOP(cmd.tokens[i+1]);
+                        string message;
+                        int senderIndex = cmd.writeUserID - 1;
+                        if(cmd.nextOP == 2 && i+2 < cmd.tokens.size()){
+                            cmd.redirectFileName = cmd.tokens[i+2];
+                            cmd.tokens.pop_back();
+                        }else if(cmd.nextOP == 1){
+                            pipes.push_back(pipestruct{});
+                            if(pipe(pipes[pipes.size()-1].fd) < 0) {
+                                cerr << "create pipe fail" << endl;
+                            }
+                        } else if(cmd.nextOP==3||cmd.nextOP==4){
+                            left = stoi(cmd.tokens[i+1].substr(1));
+                            int inPipeQueue = matchNumberPipeQueue(left);
+                            if(inPipeQueue == -1){ // didn't find same left numberpipe
+                                numberPipes.push_back(pipestruct{});
+                                if(pipe(numberPipes[numberPipes.size()-1].fd)<0){
+                                    cerr << "pipe error!" << endl;
+                                }
+                                numberPipes[numberPipes.size()-1].pipetype = cmd.nextOP;
+                                numberPipes[numberPipes.size()-1].numberleft = left;
+                            }
+                        }
+                        if(!userInfoPtr[senderIndex].alive){
+                            cmd.userPipeErrorType = 1;
+                            tmpMessage.clear();
+                            tmpMessage = "*** Error: user #" + to_string(cmd.writeUserID) + " does not exist yet\n";
+                            cout << tmpMessage;
+                        } else {
+                            tmpMessage.clear();
+                            if(existUserPipe(cmd.writeUserID - 1, userInfoPtr[currentIndex].ID - 1)){
+                                tmpMessage = "*** " + string(userInfoPtr[currentIndex].name) + " (#" 
+                                    + to_string(userInfoPtr[currentIndex].ID) + ") just received from " 
+                                    + string(userInfoPtr[senderIndex].name) + " (#" 
+                                    + to_string(userInfoPtr[senderIndex].ID) + ") by '" 
+                                    + cmd.wholecommand +"' ***\n";
+                                memset(messagePtr, '\0', 15000);
+                                strcpy(messagePtr, tmpMessage.c_str());                
+                                broadcast();
+                                userPipeInFd = userPipePtr[senderIndex].fd[currentIndex];
+                            }else{
+                                tmpMessage.clear();
+                                tmpMessage = "*** Error: the pipe #" + to_string(cmd.writeUserID) 
+                                        + "->" + to_string(userInfoPtr[currentIndex].ID) + " does not exist yet. ***\n";
+                                cmd.userPipeErrorType = 1;
+                                cout << tmpMessage;
+                            }
+                        }
+                    }
+                    ++i;      
                 }else{
                     if(cmd.nextOP == 2 && i+1 < cmd.tokens.size()){
                         cmd.redirectFileName = cmd.tokens[i+1];
@@ -392,6 +728,9 @@ void processToken(command &cmd){
             }
             
             forkandexec(cmd, left);
+            cmd.readUserID = -1;
+            cmd.writeUserID = -1;
+            cmd.userPipeErrorType = 0;
             cmd.currentCommand = "";
             cmd.commandArgument.clear();
         } 
@@ -459,9 +798,10 @@ void executable(){
 
     string cmdLine;
     stringstream ss;
+    
     while(cout << "% " && getline(cin, cmdLine)){
         command currentcmd;
-        
+        currentcmd.wholecommand = cmdLine;
         ss << cmdLine;
         string token;
         vector<string> tmp;
@@ -532,6 +872,15 @@ void rwgserver(){
     messagePtr = (char *)mmap(NULL, 15000, PROT_READ | PROT_WRITE, MAP_SHARED, shmMessage, 0);
     memset(messagePtr, '\0', 15000);
 
+    shmUserPipes = shm_open("UserPipes", O_CREAT | O_RDWR, 0666);
+    if(ftruncate(shmUserPipes, 30 * sizeof(userpipestruct))<0){
+        cerr << "dddd:" << strerror(errno) << endl;
+    }
+    userPipePtr = (userpipestruct *)mmap(NULL, 30 * sizeof(userpipestruct), PROT_READ | PROT_WRITE, MAP_SHARED, shmUserPipes, 0);
+    for(int i=0;i<30;++i){
+        for(int j=0;j<30;++j) userPipePtr[i].fd[j] = -1;
+    }
+
     while(1){
         sockaddr_in clientAddr = {};
         bzero((char *)&clientAddr, sizeof(clientAddr));
@@ -592,6 +941,7 @@ int main(int argc, char *argv[]){
     signal(SIGCHLD, signal_child);
     signal(SIGINT, signal_terminate);
     signal(SIGUSR1, signal_usr1);
+    signal(SIGUSR2, signal_usr2);
 
     if(argc < 2) {
         cerr << "No port input\n";
