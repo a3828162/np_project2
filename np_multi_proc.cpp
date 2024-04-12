@@ -153,8 +153,8 @@ struct userinfo
 
 struct userpipestruct
 {
-    int a;
     int fd[30];
+    int removefd[30];
 };
 
 vector<pipestruct> pipes;
@@ -201,6 +201,13 @@ void signal_usr1(int signal){ // print message
 
 void signal_usr2(int signal){ // print message
     if(signal != SIGUSR2) return;
+    for(int i=0;i<30;++i){
+        if(userPipePtr[i].removefd[currentIndex] >= 0){
+            close(userPipePtr[i].removefd[currentIndex]);
+            userPipePtr[i].removefd[currentIndex] = -1;
+        }
+    }
+
     for(int i=0;i<30;++i){
         if(userPipePtr[i].fd[currentIndex] == -2){
             string fifoName = "user_pipe/" + to_string(i+1) + "-" + to_string(currentIndex+1);
@@ -606,13 +613,14 @@ void processToken(command &cmd){
                         string message;
                         // receiver first
                         int senderIndex = cmd.writeUserID - 1;
+                        cout << userInfoPtr[senderIndex].alive << endl;
                         if(!userInfoPtr[senderIndex].alive){
                             cmd.userPipeErrorType = 2;
                             tmpMessage.clear();
                             tmpMessage = "*** Error: user #" + to_string(cmd.writeUserID) + " does not exist yet\n";
                             cout << tmpMessage;
                         } else {
-                            if(existUserPipe(cmd.writeUserID, userInfoPtr[currentIndex].ID)){
+                            if(existUserPipe(cmd.writeUserID - 1, userInfoPtr[currentIndex].ID - 1)){
                                 tmpMessage.clear();
                                 tmpMessage = "*** " + string(userInfoPtr[currentIndex].name) + " (#" 
                                     + to_string(userInfoPtr[currentIndex].ID) + ") just received from " 
@@ -773,10 +781,10 @@ void processCommand(command &cmd){
             close(userInfoPtr[currentIndex].ssock);
             for(int i=0;i<30;++i){
                 if(userPipePtr[currentIndex].fd[i] >= 0){
-                    
+                    userPipePtr[currentIndex].removefd[i] = userPipePtr[currentIndex].fd[i];
                     userPipePtr[currentIndex].fd[i] = -1;
+                    kill(userInfoPtr[i].cpid, SIGUSR2);
                     string fifoName = "user_pipe/" + to_string(currentIndex+1) + "-" + to_string(i+1);
-                    cout <<"1:" << fifoName << endl;
                     unlink(fifoName.c_str());
                 }
                 if(userPipePtr[i].fd[currentIndex] >= 0){
@@ -900,7 +908,7 @@ void rwgserver(){
     }
     userPipePtr = (userpipestruct *)mmap(NULL, 30 * sizeof(userpipestruct), PROT_READ | PROT_WRITE, MAP_SHARED, shmUserPipes, 0);
     for(int i=0;i<30;++i){
-        for(int j=0;j<30;++j) userPipePtr[i].fd[j] = -1;
+        for(int j=0;j<30;++j) userPipePtr[i].fd[j] = -1, userPipePtr[i].removefd[j] = -1;
     }
 
     while(1){
