@@ -114,11 +114,27 @@ vector<pipestruct> pipes;
 vector<pipestruct> numberPipes;
 int maxProcessNum = 500;
 int processNum = 0;
+int cpid = 0;
 
 void signal_child(int signal){
+    if(signal != SIGCHLD) return;
 	int status;
 	//while(waitpid(-1,&status,WNOHANG) > 0){}
     while(waitpid(-1,&status,WNOHANG) > 0){ --processNum; } // add
+}
+
+void signal_quit(int signal){
+    if(signal != SIGQUIT) return;
+    kill(0, SIGKILL);
+    while(waitpid(-1,NULL,WNOHANG) > 0);
+    exit(0);
+}
+
+void signal_terminate(int signal){
+    if(signal != SIGINT) return;
+    kill(cpid, SIGQUIT);
+    waitpid(cpid, NULL, 0);
+    exit(0);
 }
 
 bool isBuildinCmd(command currentcmd){
@@ -369,7 +385,8 @@ void executable(int &ssock){
 int main(int argc, char *argv[]){
 
     signal(SIGCHLD, signal_child);
-
+    std::cout.setf(std::ios::unitbuf);
+    std::cerr.setf(std::ios::unitbuf);
     if(argc < 2) {
         cerr << "No port input\n";
         exit(0);
@@ -412,8 +429,7 @@ int main(int argc, char *argv[]){
         unsigned int client_len = sizeof(clientAddr);
         int ssock = accept(msock, (sockaddr *)&clientAddr, &client_len);
         
-        int child_pid;
-        switch (child_pid = fork())
+        switch (cpid = fork())
         {
         case 0: // child process
             dup2(ssock, STDIN_FILENO);
@@ -427,7 +443,7 @@ int main(int argc, char *argv[]){
             break;
         default: // parent process
             close(ssock);
-            waitpid(child_pid, NULL, 0);
+            waitpid(cpid, NULL, 0);
             break;
         }
     }

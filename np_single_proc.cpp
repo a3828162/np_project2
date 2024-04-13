@@ -255,10 +255,10 @@ int matchNumberPipeQueue(int left){
 void decreaseNumberPipeLeft(){
     for(int i = 0;i<numberPipes.size();++i){
         --numberPipes[i].numberleft;
-        if(numberPipes[i].numberleft < 0){
+        /*if(numberPipes[i].numberleft < 0){
             numberPipes.erase(numberPipes.begin()+i);
             --i;
-        } 
+        } */
     }
 }
 
@@ -331,7 +331,7 @@ void name(int userIndex, string newName){
         } 
     }
     if(exist){
-        message = "*** User " + newName + " already exists. ***\n";
+        message = "*** User '" + newName + "' already exists. ***\n";
         if(write(users[userIndex].ssock, message.c_str(),message.size())<0){
             cerr << "write error" << strerror(errno) <<"\n";
         }
@@ -345,13 +345,13 @@ void name(int userIndex, string newName){
 void who(int userIndex){
     string message;
 
-    message = "<ID>    <nickname>    <IP:port>    <indicate me>\n";
+    message = "<ID>	<nickname>	<IP:port>	<indicate me>\n";
     if(write(users[userIndex].ssock, message.c_str(),message.size())<0){
         cerr << "write error" << strerror(errno) <<"\n";
     }
     for(int j=0;j<users.size();++j){
-        message = to_string(users[j].ID) + "    " + users[j].name + "    " + users[j].addr + ":" + to_string(users[j].port);
-        if(j==userIndex) message += "    <-me\n";
+        message = to_string(users[j].ID) + "	" + users[j].name + "	" + users[j].addr + ":" + to_string(users[j].port);
+        if(j==userIndex) message += "	<-me\n";
         else message += "\n";
         if(write(users[userIndex].ssock, message.c_str(), message.size())<0){
             cerr << "write error" << strerror(errno) <<"\n";
@@ -416,7 +416,11 @@ void forkandexec(command &cmd, int left, int &userIndex){
     }else if(pid == 0) { // chld process
 
         for(int i=0;i<numberPipes.size();++i){
+            //cout << "i:" << i << " size:" << numberPipes.size() << "left:" << numberPipes[i].numberleft << "\n";
             if(numberPipes[i].numberleft == 0){
+                //cout << "i:" << i << " size:" << numberPipes.size() << "\n";
+                //cout << "read:" << numberPipes[i].fd[0] << " write:" << numberPipes[i].fd[1] << "\n";
+                //cout << "previous" << cmd.previosOP << " Next:" << cmd.nextOP << "\n";
                 close(numberPipes[i].fd[1]);
                 dup2(numberPipes[i].fd[0], STDIN_FILENO);
                 close(numberPipes[i].fd[0]); 
@@ -659,7 +663,7 @@ void processToken(command &cmd, int &userIndex){
                         int senderIndex = getUserIndexFromID(cmd.writeUserID);
                         if(senderIndex == -1){
                             cmd.userPipeErrorType = 1;
-                            message = "*** Error: user #" + to_string(cmd.writeUserID) + " does not exist yet\n";
+                            message = "*** Error: user #" + to_string(cmd.writeUserID) + " does not exist yet. ***\n";
                             if(write(users[userIndex].ssock, message.c_str(), message.size())<0){
                                 cerr << "write error:" << strerror(errno) <<"\n";
                             }
@@ -669,11 +673,11 @@ void processToken(command &cmd, int &userIndex){
                                     + to_string(users[userIndex].ID) + ") just received from " 
                                     + users[senderIndex].name + " (#" 
                                     + to_string(users[senderIndex].ID) + ") by '" 
-                                    + cmd.wholecommand.substr(0,cmd.wholecommand.size()-2) +"' ***\n";
+                                    + cmd.wholecommand +"' ***\n";
                                 broadcast(message);
                             }else{
                                 message = "*** Error: the pipe #" + to_string(cmd.writeUserID) 
-                                        + "->" + to_string(users[userIndex].ID) + " does not exist yet. ***\n";
+                                        + "->#" + to_string(users[userIndex].ID) + " does not exist yet. ***\n";
                                 cmd.userPipeErrorType = 1;
                                 if(write(users[userIndex].ssock, message.c_str(), message.size())<0){
                                     cerr << "write error:" << strerror(errno) <<"\n";
@@ -691,14 +695,14 @@ void processToken(command &cmd, int &userIndex){
                         int receiverIndex = getUserIndexFromID(cmd.readUserID);
                         if(receiverIndex == -1){
                             cmd.userPipeErrorType = 1;
-                            message = "*** Error: user #" + to_string(cmd.readUserID) + " does not exist yet\n";
+                            message = "*** Error: user #" + to_string(cmd.readUserID) + " does not exist yet. ***\n";
                             if(write(users[userIndex].ssock, message.c_str(), message.size())<0){
                                 cerr << "write error:" << strerror(errno) <<"\n";
                             }
                         } else {
                             if(existUserPipe(userPipe.senderUserID, userPipe.receiverUserID)){
                                 message = "*** Error: the pipe #" + to_string(users[userIndex].ID) 
-                                        + "->" + to_string(cmd.readUserID) + " already exists. ***\n";
+                                        + "->#" + to_string(cmd.readUserID) + " already exists. ***\n";
                                 cmd.userPipeErrorType = 1;
                                 if(write(users[userIndex].ssock, message.c_str(), message.size())<0){
                                     cerr << "write error:" << strerror(errno) <<"\n";
@@ -706,7 +710,7 @@ void processToken(command &cmd, int &userIndex){
                             } else {
                                 message = "*** " + users[userIndex].name + " (#" 
                                         + to_string(users[userIndex].ID) + ") just piped '" 
-                                        + cmd.wholecommand.substr(0,cmd.wholecommand.size()-2) + "' to " + users[receiverIndex].name + " (#" 
+                                        + cmd.wholecommand + "' to " + users[receiverIndex].name + " (#" 
                                         + to_string(users[receiverIndex].ID) + ") ***\n";
                                 broadcast(message);
                                 if(pipe(userPipe.fd)<0){
@@ -742,7 +746,7 @@ void processToken(command &cmd, int &userIndex){
                         int senderIndex = getUserIndexFromID(cmd.writeUserID);
                         if(senderIndex == -1){
                             cmd.userPipeErrorType = 2;
-                            message = "*** Error: user #" + to_string(cmd.writeUserID) + " does not exist yet\n";
+                            message = "*** Error: user #" + to_string(cmd.writeUserID) + " does not exist yet. ***\n";
                             if(write(users[userIndex].ssock, message.c_str(), message.size())<0){
                                 cerr << "write error:" << strerror(errno) <<"\n";
                             }
@@ -752,11 +756,11 @@ void processToken(command &cmd, int &userIndex){
                                     + to_string(users[userIndex].ID) + ") just received from " 
                                     + users[senderIndex].name + " (#" 
                                     + to_string(users[senderIndex].ID) + ") by '" 
-                                    + cmd.wholecommand.substr(0,cmd.wholecommand.size()-2) +"' ***\n";
+                                    + cmd.wholecommand +"' ***\n";
                                 broadcast(message);
                             }else{
                                 message = "*** Error: the pipe #" + to_string(cmd.writeUserID) 
-                                        + "->" + to_string(users[userIndex].ID) + " does not exist yet. ***\n";
+                                        + "->#" + to_string(users[userIndex].ID) + " does not exist yet. ***\n";
                                 cmd.userPipeErrorType = 2;
                                 if(write(users[userIndex].ssock, message.c_str(), message.size())<0){
                                     cerr << "write error:" << strerror(errno) <<"\n";
@@ -771,14 +775,14 @@ void processToken(command &cmd, int &userIndex){
                         int receiverIndex = getUserIndexFromID(cmd.readUserID);
                         if(receiverIndex == -1){
                             cmd.userPipeErrorType = cmd.userPipeErrorType == 2 ? 4 : 3;
-                            message = "*** Error: user #" + to_string(cmd.readUserID) + " does not exist yet\n";
+                            message = "*** Error: user #" + to_string(cmd.readUserID) + " does not exist yet. ***\n";
                             if(write(users[userIndex].ssock, message.c_str(), message.size())<0){
                                 cerr << "write error:" << strerror(errno) <<"\n";
                             }
                         } else {
                             if(existUserPipe(userPipe.senderUserID, userPipe.receiverUserID)){
                                 message = "*** Error: the pipe #" + to_string(users[userIndex].ID) 
-                                        + "->" + to_string(cmd.readUserID) + " already exists. ***\n";
+                                        + "->#" + to_string(cmd.readUserID) + " already exists. ***\n";
                                 cmd.userPipeErrorType = cmd.userPipeErrorType == 2 ? 4 : 3;
                                 if(write(users[userIndex].ssock, message.c_str(), message.size())<0){
                                     cerr << "write error:" << strerror(errno) <<"\n";
@@ -786,7 +790,7 @@ void processToken(command &cmd, int &userIndex){
                             } else {
                                 message = "*** " + users[userIndex].name + " (#" 
                                         + to_string(users[userIndex].ID) + ") just piped '" 
-                                        + cmd.wholecommand.substr(0,cmd.wholecommand.size()-2) + "' to " + users[receiverIndex].name + " (#" 
+                                        + cmd.wholecommand + "' to " + users[receiverIndex].name + " (#" 
                                         + to_string(users[receiverIndex].ID) + ") ***\n";
                                 broadcast(message);
                                 if(pipe(userPipe.fd)<0){
@@ -823,7 +827,7 @@ void processToken(command &cmd, int &userIndex){
                         }
                         if(senderIndex == -1){
                             cmd.userPipeErrorType = 1;
-                            message = "*** Error: user #" + to_string(cmd.writeUserID) + " does not exist yet\n";
+                            message = "*** Error: user #" + to_string(cmd.writeUserID) + " does not exist yet. ***\n";
                             if(write(users[userIndex].ssock, message.c_str(), message.size())<0){
                                 cerr << "write error:" << strerror(errno) <<"\n";
                             }
@@ -833,11 +837,11 @@ void processToken(command &cmd, int &userIndex){
                                     + to_string(users[userIndex].ID) + ") just received from " 
                                     + users[senderIndex].name + " (#" 
                                     + to_string(users[senderIndex].ID) + ") by '" 
-                                    + cmd.wholecommand.substr(0,cmd.wholecommand.size()-2) +"' ***\n";
+                                    + cmd.wholecommand +"' ***\n";
                                 broadcast(message);
                             }else{
                                 message = "*** Error: the pipe #" + to_string(cmd.writeUserID) 
-                                        + "->" + to_string(users[userIndex].ID) + " does not exist yet. ***\n";
+                                        + "->#" + to_string(users[userIndex].ID) + " does not exist yet. ***\n";
                                 cmd.userPipeErrorType = 1;
                                 if(write(users[userIndex].ssock, message.c_str(), message.size())<0){
                                     cerr << "write error:" << strerror(errno) <<"\n";
@@ -860,6 +864,14 @@ void processToken(command &cmd, int &userIndex){
             cmd.userPipeErrorType = 0;
             cmd.currentCommand = "";
             cmd.commandArgument.clear();
+            for(int i = 0;i<numberPipes.size();++i){
+                //cout << "Left:" << numberPipes[i].numberleft << "\n";
+                if(numberPipes[i].numberleft <= 0){
+                    
+                    numberPipes.erase(numberPipes.begin()+i);
+                    --i;
+                } 
+            }
         } 
     }
     pipes.clear();
@@ -908,12 +920,12 @@ int processCommand(command &cmd, int &userIndex){
             decreaseNumberPipeLeft();
             dup2recovery();
         } else if(cmd.tokens[0] == "tell"){
-            string message = "*** " + users[userIndex].name + " told you ***: ";
+            string message = "";
+            
             for(int i=2;i<cmd.tokens.size();++i){
-                if(i!=cmd.tokens.size();++i) message += cmd.tokens[i]+" ";
+                if(i!=cmd.tokens.size()-1) message += cmd.tokens[i]+" ";
                 else message += cmd.tokens[i];
             }
-            message += "\n"; 
             unicast(userIndex, stoi(cmd.tokens[1]), message);
             decreaseNumberPipeLeft();
             dup2recovery();
@@ -956,6 +968,8 @@ int executable(int &userIndex, string &inputCmd){
     //while(cout << "% " && getline(cin, cmdLine)){
     command currentcmd;
     currentcmd.wholecommand = inputCmd;
+    if(currentcmd.wholecommand[currentcmd.wholecommand.size()-1] == '\n' || currentcmd.wholecommand[currentcmd.wholecommand.size()-1] == '\r') currentcmd.wholecommand.pop_back();
+    if(currentcmd.wholecommand[currentcmd.wholecommand.size()-1] == '\n' || currentcmd.wholecommand[currentcmd.wholecommand.size()-1] == '\r') currentcmd.wholecommand.pop_back();
     ss << inputCmd;
     string token;
     vector<string> tmp;
@@ -1095,7 +1109,7 @@ void rwgserver(){
                 if(state == -1){
                     users[i].userNumberPipes.clear();
                     users.erase(users.begin()+i);
-                    cout << users.size() << endl;
+                    //cout << users.size() << endl;
                     break;
                 }else {
                     if(write(currentfd, "% ", 2)<0){

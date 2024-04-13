@@ -179,6 +179,12 @@ void signal_child(int signal){
 
 void signal_terminate(int signal){
     if(signal != SIGINT) return;
+    for(int i=0;i<30;++i){
+        if(userInfoPtr[i].alive){
+            kill(userInfoPtr[i].cpid, SIGQUIT);
+            userInfoPtr[i].alive = false;
+        }
+    }
     munmap(messagePtr, 15000);
 	munmap(userInfoPtr, 30 * sizeof(userinfo));
     munmap(userPipePtr, 30 * sizeof(userpipestruct));
@@ -191,11 +197,13 @@ void signal_terminate(int signal){
             unlink(fifoName.c_str());
         }
     }
+    while(waitpid(-1, NULL,WNOHANG) > 0) ;
     exit(0);
 }
 
 void signal_usr1(int signal){ // print message
     if(signal != SIGUSR1) return;
+    //write(userInfoPtr[currentIndex].ssock, messagePtr, strlen(messagePtr));
     cout << string(messagePtr);
 }
 
@@ -214,6 +222,13 @@ void signal_usr2(int signal){ // print message
             userPipePtr[i].fd[currentIndex] = open(fifoName.c_str(), O_RDONLY | O_NONBLOCK);
         }
     }
+}
+
+void signal_quit(int signal){
+    if(signal != SIGQUIT) return;
+    kill(0,SIGKILL);
+    while(waitpid(-1, NULL,WNOHANG) > 0);
+    exit(0);
 }
 
 bool isBuildinCmd(command currentcmd){
@@ -238,10 +253,6 @@ int matchNumberPipeQueue(int left){
 void decreaseNumberPipeLeft(){
     for(int i = 0;i<numberPipes.size();++i){
         --numberPipes[i].numberleft;
-        if(numberPipes[i].numberleft < 0){
-            numberPipes.erase(numberPipes.begin()+i);
-            --i;
-        } 
     }
 }
 
@@ -251,15 +262,17 @@ void broadcast(){
             kill(userInfoPtr[i].cpid, SIGUSR1);
         } 
     }
+
+    usleep(1000);
 }
 
 void who(){
-    cout << "<ID>    <nickname>  <IP:port>           <indicate me>\n";
+    cout << "<ID>	<nickname>	<IP:port>	<indicate me>\n";
     for(int i=0;i<30;++i){
         if(userInfoPtr[i].alive){
-            cout << userInfoPtr[i].ID << "   " << userInfoPtr[i].name
-                 << "   " << userInfoPtr[i].addr << ":" << userInfoPtr[i].port;
-            if(currentIndex == i) cout <<"<-me";
+            cout << userInfoPtr[i].ID << "	" << userInfoPtr[i].name
+                 << "	" << userInfoPtr[i].addr << ":" << userInfoPtr[i].port;
+            if(currentIndex == i) cout <<"	<-me";
             cout << '\n';
         }
     }
@@ -278,8 +291,8 @@ void name(string inputName){
     } else {
         strcpy(userInfoPtr[currentIndex].name, inputName.c_str());
         tmpMessage.clear();
-        tmpMessage = "*** Use from " + string(userInfoPtr[currentIndex].addr) + ":" 
-                    + to_string(userInfoPtr[currentIndex].port) + "is named '"
+        tmpMessage = "*** User from " + string(userInfoPtr[currentIndex].addr) + ":" 
+                    + to_string(userInfoPtr[currentIndex].port) + " is named '"
                     + string(userInfoPtr[currentIndex].name) + "'. ***\n";
         memset(messagePtr, '\0', 15000);
         strcpy(messagePtr, tmpMessage.c_str());
@@ -526,7 +539,7 @@ void processToken(command &cmd){
                         if(!userInfoPtr[senderIndex].alive){
                             cmd.userPipeErrorType = 1;
                             tmpMessage.clear();
-                            tmpMessage = "*** Error: user #" + to_string(cmd.writeUserID) + " does not exist yet\n";
+                            tmpMessage = "*** Error: user #" + to_string(cmd.writeUserID) + " does not exist yet. ***\n";
                             cout << tmpMessage;
                         } else {
                             if(existUserPipe(senderIndex , currentIndex)){
@@ -535,7 +548,7 @@ void processToken(command &cmd){
                                     + to_string(userInfoPtr[currentIndex].ID) + ") just received from " 
                                     + userInfoPtr[senderIndex].name + " (#" 
                                     + to_string(userInfoPtr[senderIndex].ID) + ") by '" 
-                                    + cmd.wholecommand.substr(0,cmd.wholecommand.size()-1) +"' ***\n";
+                                    + cmd.wholecommand + "' ***\n";
                                 memset(messagePtr, '\0', 15000);
                                 strcpy(messagePtr, tmpMessage.c_str());
                                 broadcast();
@@ -543,7 +556,7 @@ void processToken(command &cmd){
                             }else{
                                 tmpMessage.clear();
                                 tmpMessage = "*** Error: the pipe #" + to_string(cmd.writeUserID) 
-                                        + "->" + to_string(userInfoPtr[currentIndex].ID) + " does not exist yet. ***\n";
+                                        + "->#" + to_string(userInfoPtr[currentIndex].ID) + " does not exist yet. ***\n";
                                 cmd.userPipeErrorType = 1;
                                 cout << tmpMessage;
                             }
@@ -562,20 +575,21 @@ void processToken(command &cmd){
                         if(!userInfoPtr[receiverIndex].alive){
                             cmd.userPipeErrorType = 1;
                             tmpMessage.clear();
-                            tmpMessage = "*** Error: user #" + to_string(cmd.readUserID) + " does not exist yet\n";
+                            tmpMessage = "*** Error: user #" + to_string(cmd.readUserID) + " does not exist yet. ***\n";
                             cout << tmpMessage;
                         } else {
                             if(existUserPipe(senderUserID - 1, receiverIndex)){
                                 tmpMessage.clear();
                                 tmpMessage = "*** Error: the pipe #" + to_string(userInfoPtr[currentIndex].ID) 
-                                        + "->" + to_string(cmd.readUserID) + " already exists. ***\n";
+                                        + "->#" + to_string(cmd.readUserID) + " already exists. ***\n";
                                 cmd.userPipeErrorType = 1;
                                 cout << tmpMessage;
                             } else {
                                 tmpMessage.clear();
                                 tmpMessage = "*** " + string(userInfoPtr[currentIndex].name) + " (#" 
                                         + to_string(userInfoPtr[currentIndex].ID) + ") just piped '" 
-                                        + cmd.wholecommand.substr(0,cmd.wholecommand.size()-1) + "' to " + string(userInfoPtr[receiverIndex].name) + " (#" 
+                                        + cmd.wholecommand
+                                        + "' to " + string(userInfoPtr[receiverIndex].name) + " (#" 
                                         + to_string(userInfoPtr[receiverIndex].ID) + ") ***\n";
                                 memset(messagePtr, '\0', 15000);
                                 strcpy(messagePtr, tmpMessage.c_str());
@@ -613,11 +627,10 @@ void processToken(command &cmd){
                         string message;
                         // receiver first
                         int senderIndex = cmd.writeUserID - 1;
-                        cout << userInfoPtr[senderIndex].alive << endl;
                         if(!userInfoPtr[senderIndex].alive){
                             cmd.userPipeErrorType = 2;
                             tmpMessage.clear();
-                            tmpMessage = "*** Error: user #" + to_string(cmd.writeUserID) + " does not exist yet\n";
+                            tmpMessage = "*** Error: user #" + to_string(cmd.writeUserID) + " does not exist yet. ***\n";
                             cout << tmpMessage;
                         } else {
                             if(existUserPipe(cmd.writeUserID - 1, userInfoPtr[currentIndex].ID - 1)){
@@ -626,7 +639,7 @@ void processToken(command &cmd){
                                     + to_string(userInfoPtr[currentIndex].ID) + ") just received from " 
                                     + userInfoPtr[senderIndex].name + " (#" 
                                     + to_string(userInfoPtr[senderIndex].ID) + ") by '" 
-                                    + cmd.wholecommand.substr(0,cmd.wholecommand.size()-1) +"' ***\n";
+                                    + cmd.wholecommand +"' ***\n";
                                 memset(messagePtr, '\0', 15000);
                                 strcpy(messagePtr, tmpMessage.c_str());
                                 broadcast();
@@ -634,7 +647,7 @@ void processToken(command &cmd){
                             }else{
                                 tmpMessage.clear();
                                 tmpMessage = "*** Error: the pipe #" + to_string(cmd.writeUserID) 
-                                        + "->" + to_string(userInfoPtr[currentIndex].ID) + " does not exist yet. ***\n";
+                                        + "->#" + to_string(userInfoPtr[currentIndex].ID) + " does not exist yet. ***\n";
                                 cmd.userPipeErrorType = 2;
                                 cout << tmpMessage;
                             }
@@ -650,20 +663,20 @@ void processToken(command &cmd){
                         if(!userInfoPtr[receiverIndex].alive){
                             cmd.userPipeErrorType = cmd.userPipeErrorType == 2 ? 4 : 3;
                             tmpMessage.clear();
-                            tmpMessage = "*** Error: user #" + to_string(cmd.readUserID) + " does not exist yet\n";
+                            tmpMessage = "*** Error: user #" + to_string(cmd.readUserID) + " does not exist yet. ***\n";
                             cout << tmpMessage;
                         } else {
                             if(existUserPipe(senderUserID - 1, receiverUserID - 1)){
                                 tmpMessage.clear();
                                 tmpMessage = "*** Error: the pipe #" + to_string(userInfoPtr[currentIndex].ID) 
-                                        + "->" + to_string(cmd.readUserID) + " already exists. ***\n";
+                                        + "->#" + to_string(cmd.readUserID) + " already exists. ***\n";
                                 cmd.userPipeErrorType = cmd.userPipeErrorType == 2 ? 4 : 3;
                                 cout << tmpMessage;
                             } else {
                                 tmpMessage.clear();
                                 tmpMessage = "*** " + string(userInfoPtr[currentIndex].name) + " (#" 
                                         + to_string(userInfoPtr[currentIndex].ID) + ") just piped '" 
-                                        + cmd.wholecommand.substr(0,cmd.wholecommand.size()-1) + "' to " + userInfoPtr[receiverIndex].name + " (#" 
+                                        + cmd.wholecommand + "' to " + userInfoPtr[receiverIndex].name + " (#" 
                                         + to_string(userInfoPtr[receiverIndex].ID) + ") ***\n";
                                 memset(messagePtr, '\0', 15000);
                                 strcpy(messagePtr, tmpMessage.c_str());                                    
@@ -709,7 +722,7 @@ void processToken(command &cmd){
                         if(!userInfoPtr[senderIndex].alive){
                             cmd.userPipeErrorType = 1;
                             tmpMessage.clear();
-                            tmpMessage = "*** Error: user #" + to_string(cmd.writeUserID) + " does not exist yet\n";
+                            tmpMessage = "*** Error: user #" + to_string(cmd.writeUserID) + " does not exist yet. ***\n";
                             cout << tmpMessage;
                         } else {
                             tmpMessage.clear();
@@ -718,7 +731,7 @@ void processToken(command &cmd){
                                     + to_string(userInfoPtr[currentIndex].ID) + ") just received from " 
                                     + string(userInfoPtr[senderIndex].name) + " (#" 
                                     + to_string(userInfoPtr[senderIndex].ID) + ") by '" 
-                                    + cmd.wholecommand.substr(0,cmd.wholecommand.size()-1) + "' ***\n";
+                                    + cmd.wholecommand + "' ***\n";
                                 memset(messagePtr, '\0', 15000);
                                 strcpy(messagePtr, tmpMessage.c_str());                
                                 broadcast();
@@ -726,7 +739,7 @@ void processToken(command &cmd){
                             }else{
                                 tmpMessage.clear();
                                 tmpMessage = "*** Error: the pipe #" + to_string(cmd.writeUserID) 
-                                        + "->" + to_string(userInfoPtr[currentIndex].ID) + " does not exist yet. ***\n";
+                                        + "->#" + to_string(userInfoPtr[currentIndex].ID) + " does not exist yet. ***\n";
                                 cmd.userPipeErrorType = 1;
                                 cout << tmpMessage;
                             }
@@ -747,6 +760,13 @@ void processToken(command &cmd){
             cmd.userPipeErrorType = 0;
             cmd.currentCommand = "";
             cmd.commandArgument.clear();
+            for(int i = 0;i<numberPipes.size();++i){
+                if(numberPipes[i].numberleft <= 0){
+                    
+                    numberPipes.erase(numberPipes.begin()+i);
+                    --i;
+                } 
+            }
         } 
     }
     pipes.clear();
@@ -773,6 +793,13 @@ void processCommand(command &cmd){
             }
             
         } else if(cmd.tokens[0] == "exit"){
+            tmpMessage.clear();
+            tmpMessage = "*** User '" + string(userInfoPtr[currentIndex].name) + "' left. ***\n";
+            memset(messagePtr, '\0', 15000);
+            strcpy(messagePtr, tmpMessage.c_str());
+            for(int i=0;i<30;++i){
+                if(userInfoPtr[i].alive && i!=currentIndex) kill(userInfoPtr[i].cpid, SIGUSR1);
+            }
             userInfoPtr[currentIndex].alive = false;
             userInfoPtr[currentIndex].cpid = 0;
             userInfoPtr[currentIndex].ID = 0;
@@ -796,15 +823,28 @@ void processCommand(command &cmd){
             }
             exit(0);
         } else if(cmd.tokens[0] == "tell"){
-            tmpMessage.clear();
-            for(int i=2;i<cmd.tokens.size();++i) tmpMessage += cmd.tokens[i];
-            tmpMessage += '\n';
-            memset(messagePtr, '\0', 15000);
-            strcpy(messagePtr, tmpMessage.c_str());
-            unicast(stoi(cmd.tokens[1]));
+            if(userInfoPtr[stoi(cmd.tokens[1])-1].alive){
+                tmpMessage.clear();
+                tmpMessage = "*** " + string(userInfoPtr[currentIndex].name) + " told you ***: ";
+                for(int i=2;i<cmd.tokens.size();++i){
+                    if(i != cmd.tokens.size()-1)tmpMessage += cmd.tokens[i] + " ";
+                    else tmpMessage += cmd.tokens[i];
+                } 
+                tmpMessage += '\n';
+                memset(messagePtr, '\0', 15000);
+                strcpy(messagePtr, tmpMessage.c_str());
+                unicast(stoi(cmd.tokens[1]));
+            } else{
+                cout << "*** Error: user #"<<stoi(cmd.tokens[1])<<" does not exist yet. ***\n";
+            }
+
         } else if(cmd.tokens[0] == "yell"){
             tmpMessage.clear();
-            for(int i=1;i<cmd.tokens.size();++i) tmpMessage += cmd.tokens[i];
+            tmpMessage = "*** " + string(userInfoPtr[currentIndex].name) + " yelled ***: ";
+            for(int i=1;i<cmd.tokens.size();++i){
+                if(i != cmd.tokens.size()-1)tmpMessage += cmd.tokens[i] + " ";
+                else tmpMessage += cmd.tokens[i];
+            } 
             tmpMessage += "\n";
             memset(messagePtr, '\0', 15000);
             strcpy(messagePtr, tmpMessage.c_str());
@@ -832,6 +872,8 @@ void executable(){
     while(cout << "% " && getline(cin, cmdLine)){
         command currentcmd;
         currentcmd.wholecommand = cmdLine;
+        if(currentcmd.wholecommand[currentcmd.wholecommand.size()-1] == '\n' || currentcmd.wholecommand[currentcmd.wholecommand.size()-1] == '\r') currentcmd.wholecommand.pop_back();
+        if(currentcmd.wholecommand[currentcmd.wholecommand.size()-1] == '\n' || currentcmd.wholecommand[currentcmd.wholecommand.size()-1] == '\r') currentcmd.wholecommand.pop_back();
         ss << cmdLine;
         string token;
         vector<string> tmp;
@@ -928,15 +970,19 @@ void rwgserver(){
         switch (child_pid = fork())
         {
         case 0: // child process
-            dup2(ssock, STDIN_FILENO);
-            dup2(ssock, STDOUT_FILENO);
-            dup2(ssock, STDERR_FILENO);
-            close(msock);
+
+
             userInfoPtr[currentIndex].ID = currentIndex+1;
             userInfoPtr[currentIndex].ssock = ssock;
             userInfoPtr[currentIndex].port = ntohs(clientAddr.sin_port);
             strcpy(userInfoPtr[currentIndex].addr, inet_ntoa(clientAddr.sin_addr));
             userInfoPtr[currentIndex].alive = true;
+            cout << "ID:" << userInfoPtr[currentIndex].ID <<"\nssock:" << userInfoPtr[currentIndex].ssock << "\nport:" << userInfoPtr[currentIndex].port << "\naddr:" << userInfoPtr[currentIndex].addr <<"\n";
+            cout << "===========================" << endl;
+            dup2(ssock, STDIN_FILENO);
+            dup2(ssock, STDOUT_FILENO);
+            dup2(ssock, STDERR_FILENO);
+            close(msock);
 			cout << "****************************************\n";
 			cout << "** Welcome to the information server. **\n";
 			cout << "****************************************\n";
@@ -972,6 +1018,7 @@ int main(int argc, char *argv[]){
     signal(SIGINT, signal_terminate);
     signal(SIGUSR1, signal_usr1);
     signal(SIGUSR2, signal_usr2);
+    signal(SIGQUIT, signal_quit);
 
     if(argc < 2) {
         cerr << "No port input\n";
