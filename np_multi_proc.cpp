@@ -160,7 +160,7 @@ struct userpipestruct
 vector<pipestruct> pipes;
 vector<pipestruct> numberPipes;
 userinfo currentUser = {};
-int maxProcessNum = 500;
+int maxProcessNum = 150;
 int processNum = 0;
 int serverPort, shmUserInfos, currentIndex, shmMessage, shmUserPipes;
 const int FD_NULL = open("/dev/null", O_RDWR);
@@ -494,7 +494,7 @@ void forkandexec(command &cmd, int left){
         }
 
         int status = 0;
-        if(cmd.nextOP == 1 || cmd.nextOP == 3 || cmd.nextOP == 4){ // | |2 !2 don't hang on forever
+        if(cmd.nextOP == 1 || cmd.nextOP == 3 || cmd.nextOP == 4 || cmd.nextOP == 5 || cmd.nextOP == 6){ // | |2 !2 don't hang on forever
             //waitpid(-1,&status,WNOHANG);
             if(waitpid(-1,&status,WNOHANG)>0){ // add
                 --processNum; // add

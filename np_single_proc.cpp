@@ -186,7 +186,7 @@ vector<userinfo> users;
 map<string, string> backupenv;
 
 bool idused[30] = {false};
-const int maxProcessNum = 500;
+const int maxProcessNum = 150;
 const string welcomemessage = "****************************************\n** Welcome to the information server. **\n****************************************\n";
 const int FD_NULL = open("/dev/null", O_RDWR);
 int processNum = 0;
@@ -440,7 +440,7 @@ void forkandexec(command &cmd, int left, int &userIndex){
                 cmd.previosOP = 0;
             }
         }
-        
+
 
         if(cmd.previosOP == 0 && cmd.nextOP != 0) { // ex. 'ls' | ls
             
@@ -509,7 +509,7 @@ void forkandexec(command &cmd, int left, int &userIndex){
                         close(numberPipes[index].fd[1]);
                         close(numberPipes[index].fd[0]);
                     }   
-                } else if(cmd.previosOP==1 && cmd.nextOP == 5){
+                } else if(cmd.previosOP==1 && cmd.nextOP == 5){ // ls | cat >2
                     if(cmd.userPipeErrorType==0){
                         int userPipeIndex = getUserPipeIndex(users[userIndex].ID ,cmd.readUserID);
                         //cout << "\nuserPipeIndex" << userPipeIndex << "\n";
@@ -617,7 +617,7 @@ void forkandexec(command &cmd, int left, int &userIndex){
 
         int status = 0;
         //usleep(20000); 
-        if(cmd.nextOP == 1 || cmd.nextOP == 3 || cmd.nextOP == 4){ // | |2 !2 don't hang on forever
+        if(cmd.nextOP == 1 || cmd.nextOP == 3 || cmd.nextOP == 4 || cmd.nextOP == 5 || cmd.nextOP == 6){ // | |2 !2 don't hang on forever
             //waitpid(-1,&status,WNOHANG);
             if(waitpid(-1,&status,WNOHANG)>0){ // add
                 --processNum; // add
@@ -634,7 +634,6 @@ void processToken(command &cmd, int &userIndex){
     // 記得把 parent process pipe fd要關掉
     int i = 0, left = 0;
     //cout << cmd.wholecommand << endl;
-    
     for(;i<cmd.tokens.size();++i) {
         if(cmd.currentCommand == "") cmd.currentCommand = cmd.tokens[i]; // push cmd
         else if(!cmd.isOPToken(cmd.tokens[i])) cmd.commandArgument.push_back(cmd.tokens[i]); // cmd argument
