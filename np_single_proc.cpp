@@ -198,6 +198,14 @@ int stdinfdTmp , stdoutTmp , stderrTmp;
 fd_set afds;
 fd_set rfds;
 
+void signal_terminate(int signal){
+    if(signal != SIGINT) return;
+
+    
+    while(waitpid(-1, NULL,WNOHANG) > 0) ;
+    exit(0);
+}
+
 void signal_child(int signal){
 	int status;
 	//while(waitpid(-1,&status,WNOHANG) > 0){}
