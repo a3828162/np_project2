@@ -386,6 +386,7 @@ int main(int argc, char *argv[]){
 
     signal(SIGCHLD, signal_child);
     signal(SIGQUIT, signal_quit);
+    signal(SIGINT, signal_terminate);
     std::cout.setf(std::ios::unitbuf);
     std::cerr.setf(std::ios::unitbuf);
     if(argc < 2) {

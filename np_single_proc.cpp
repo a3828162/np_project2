@@ -201,7 +201,7 @@ fd_set rfds;
 void signal_terminate(int signal){
     if(signal != SIGINT) return;
 
-    
+    kill(0, SIGQUIT);
     while(waitpid(-1, NULL,WNOHANG) > 0) ;
     exit(0);
 }
@@ -1133,6 +1133,7 @@ int main(int argc, char *argv[]){
     std::cout.setf(std::ios::unitbuf);
     std::cerr.setf(std::ios::unitbuf);
     signal(SIGCHLD, signal_child);
+    signal(SIGINT, signal_terminate);
     for(int i=0;i<30;++i) idused[i] = false;
     if(argc < 2) {
         cerr << "No port input\n";

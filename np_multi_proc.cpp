@@ -894,8 +894,6 @@ void executable(){
 
 void rwgserver(){
     processNum = 0;
-    signal(SIGCHLD, signal_child);
-    signal(SIGUSR1, signal_usr1);
     int msock;
     if((msock = socket(AF_INET, SOCK_STREAM, 0)) < 0){
         cerr << "Create Main Socket fail:" << strerror(errno) << endl;;
