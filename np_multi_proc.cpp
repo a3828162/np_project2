@@ -263,7 +263,7 @@ void broadcast(){
         } 
     }
 
-    usleep(1000);
+    usleep(100000);
 }
 
 void who(){
