@@ -226,7 +226,6 @@ void signal_usr2(int signal){ // print message
 
 void signal_quit(int signal){
     if(signal != SIGQUIT) return;
-    kill(0,SIGKILL);
     while(waitpid(-1, NULL,WNOHANG) > 0);
     exit(0);
 }

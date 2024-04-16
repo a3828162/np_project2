@@ -125,7 +125,7 @@ void signal_child(int signal){
 
 void signal_quit(int signal){
     if(signal != SIGQUIT) return;
-    kill(0, SIGKILL);
+    //kill(0, SIGQUIT);
     while(waitpid(-1,NULL,WNOHANG) > 0);
     exit(0);
 }
@@ -385,6 +385,7 @@ void executable(int &ssock){
 int main(int argc, char *argv[]){
 
     signal(SIGCHLD, signal_child);
+    signal(SIGQUIT, signal_quit);
     std::cout.setf(std::ios::unitbuf);
     std::cerr.setf(std::ios::unitbuf);
     if(argc < 2) {
