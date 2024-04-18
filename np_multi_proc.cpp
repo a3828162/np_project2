@@ -955,6 +955,10 @@ void rwgserver(){
         bzero((char *)&clientAddr, sizeof(clientAddr));
         unsigned int client_len = sizeof(clientAddr);
         int ssock = accept(msock, (sockaddr *)&clientAddr, &client_len);
+        if(ssock < 0){
+            cerr << "accept error: " << strerror(errno) << "\n";
+            continue;
+        }
         
         for(int i=0;i<30;++i){
             if(!userInfoPtr[i].alive){

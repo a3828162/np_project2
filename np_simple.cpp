@@ -430,6 +430,10 @@ int main(int argc, char *argv[]){
         bzero((char *)&clientAddr, sizeof(clientAddr));
         unsigned int client_len = sizeof(clientAddr);
         int ssock = accept(msock, (sockaddr *)&clientAddr, &client_len);
+        if(ssock < 0){
+            cerr << "accept error: " << strerror(errno) << "\n";
+            continue;
+        }
         
         switch (cpid = fork())
         {
