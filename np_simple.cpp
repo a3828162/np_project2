@@ -134,6 +134,7 @@ void signal_terminate(int signal){
     if(signal != SIGINT) return;
     kill(cpid, SIGQUIT);
     waitpid(cpid, NULL, 0);
+    while(waitpid(-1,NULL,WNOHANG) > 0);
     exit(0);
 }
 
