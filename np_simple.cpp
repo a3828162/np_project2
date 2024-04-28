@@ -320,6 +320,14 @@ void processToken(command &cmd){
             forkandexec(cmd, left);
             cmd.currentCommand = "";
             cmd.commandArgument.clear();
+            for(int i = 0;i<numberPipes.size();++i){
+                //cout << "Left:" << numberPipes[i].numberleft << "\n";
+                if(numberPipes[i].numberleft <= 0){
+                    
+                    numberPipes.erase(numberPipes.begin()+i);
+                    --i;
+                } 
+            }
         } 
     }
     pipes.clear();
