@@ -1037,6 +1037,7 @@ void rwgserver(){
     FD_ZERO(&afds);
     FD_ZERO(&rfds);
     FD_SET(msock, &afds);
+    if(msock > maxfd) maxfd = msock;
     for(int i=0;environ[i]!=NULL;++i){
         string key(environ[i]);
         auto it = key.find('=');
