@@ -960,13 +960,16 @@ void rwgserver(){
             continue;
         }
         
-        for(int i=0;i<30;++i){
-            if(!userInfoPtr[i].alive){
-                currentIndex = i;
-                userInfoPtr[i].alive = true;
+        int t=0;
+        for(int t=0;t<30;++t){
+            if(!userInfoPtr[t].alive){
+                currentIndex = t;
+                userInfoPtr[t].alive = true;
                 break;
             }
         }
+        if(t==30) continue;
+
         int child_pid;
         switch (child_pid = fork())
         {

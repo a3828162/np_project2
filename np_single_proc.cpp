@@ -1050,6 +1050,11 @@ void rwgserver(){
             cerr << "select fail:" << strerror(errno) << "\n";
             continue;
         }*/
+        for(int i=0;i<users.size();++i){
+            if(users[i].ssock>maxfd){
+                maxfd = users[i].ssock;
+            }
+        }
         if(select(maxfd+1, &rfds, NULL, NULL, (struct timeval *)0) < 0){
             cerr << "select fail:" << strerror(errno) << "\n";
             continue;
@@ -1067,13 +1072,15 @@ void rwgserver(){
                 cerr << "accpet error:" << strerror(errno) << "\n";
             }
             userinfo user = {};
-            for(int i = 0;i<30;++i){
+            int i=0;
+            for(i = 0;i<30;++i){
                 if(idused[i] == false){
                     idused[i] = true;
                     user.ID = i+1;
                     break;
                 }
             }
+            if(i==30) continue;
             
             user.ssock = ssock;
             user.port = ntohs(clientAddr.sin_port);
